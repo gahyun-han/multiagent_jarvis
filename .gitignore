@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+logs/
+data/ledger.json
+data/savings.json
+*.tsbuildinfo
+.venv/
+venv/

@@ -1,0 +1,41 @@
+{
+  "claude": {
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 4096,
+    "token_budget_per_5h": 100000,
+    "budget_warning_threshold": 0.8
+  },
+  "telegram": {
+    "polling_interval": 1,
+    "max_retries": 3
+  },
+  "triage": {
+    "urgent_keywords": ["지금", "급해", "긴급", "빨리", "당장", "urgent", "asap", "now"],
+    "default_priority": 5,
+    "max_backlog_size": 100
+  },
+  "agents": {
+    "calendar": {
+      "reminder_lead_minutes": 30,
+      "daily_briefing_hour": 8
+    },
+    "finance": {
+      "currency": "KRW",
+      "budget_warning_threshold": 0.9
+    },
+    "paper": {
+      "summary_language": "ko",
+      "max_papers_per_query": 20
+    }
+  },
+  "scheduler": {
+    "backlog_check_interval_minutes": 5,
+    "daily_briefing_cron": "0 8 * * *",
+    "usage_reset_hours": 5
+  },
+  "data_paths": {
+    "backlog_queue": "data/backlog_queue.json",
+    "token_usage": "data/token_usage.json",
+    "execution_log": "data/execution_log.json"
+  }
+}
