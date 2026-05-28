@@ -37,6 +37,8 @@ class BotListener:
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("help", self._handle_help))
         self.app.add_handler(CommandHandler("status", self._handle_status))
+        self.app.add_handler(CommandHandler("backlog", self._handle_backlog))
+        self.app.add_handler(CommandHandler("assets", self._handle_assets))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     def _is_allowed(self, user_id: int) -> bool:
@@ -73,6 +75,31 @@ class BotListener:
         usage = UsageManager()
         summary = usage.get_status_summary()
         await update.message.reply_text(summary)
+
+    async def _handle_backlog(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_allowed(update.effective_user.id):
+            return
+        from agents.inbox_trage.queue_writer import QueueWriter
+        queue = QueueWriter()
+        pending = queue.get_pending(limit=20)
+        if not pending:
+            await update.message.reply_text("📭 백로그가 비어 있습니다.")
+            return
+        lines = [f"📋 *백로그 ({len(pending)}건)*\n"]
+        for i, item in enumerate(pending, 1):
+            label = "🔴" if item["priority"] >= 8 else "🟡" if item["priority"] >= 5 else "🟢"
+            lines.append(
+                f"{i}. {label} `[{item['domain']}]` {item['summary']}\n"
+                f"   ID: `{item['id']}` | 우선순위: {item['priority']}/10"
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _handle_assets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_allowed(update.effective_user.id):
+            return
+        from agents.finance.asset_manager import AssetManager
+        summary = AssetManager().net_worth_summary()
+        await update.message.reply_text("💼 *전체 자산 현황*\n\n" + summary, parse_mode="Markdown")
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_allowed(update.effective_user.id):
