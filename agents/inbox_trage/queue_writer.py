@@ -49,6 +49,28 @@ class QueueWriter:
                 entry["completed_at"] = datetime.now(timezone.utc).isoformat()
         self._save(queue)
 
+    def delete_all_pending(self) -> int:
+        queue = self._load()
+        now = datetime.now(timezone.utc).isoformat()
+        count = 0
+        for entry in queue:
+            if entry["status"] == "pending":
+                entry["status"] = "done"
+                entry["completed_at"] = now
+                count += 1
+        self._save(queue)
+        return count
+
+    def delete_by_id(self, entry_id: str) -> bool:
+        queue = self._load()
+        for entry in queue:
+            if entry["id"] == entry_id and entry["status"] == "pending":
+                entry["status"] = "done"
+                entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+                self._save(queue)
+                return True
+        return False
+
     def _load(self) -> list:
         if not QUEUE_PATH.exists():
             return []

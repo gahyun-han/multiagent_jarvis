@@ -2,10 +2,11 @@
 Telegram bot listener — entry point for all incoming messages.
 Receives messages and passes them to the router.
 """
+import asyncio
 import os
 import logging
 from telegram import Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
 from orchestrator.router import Router
@@ -37,8 +38,11 @@ class BotListener:
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(CommandHandler("help", self._handle_help))
         self.app.add_handler(CommandHandler("status", self._handle_status))
+        self.app.add_handler(CommandHandler("usage", self._handle_status))
         self.app.add_handler(CommandHandler("backlog", self._handle_backlog))
         self.app.add_handler(CommandHandler("assets", self._handle_assets))
+        self.app.add_handler(CommandHandler("python", self._handle_python))
+        self.app.add_handler(CallbackQueryHandler(self._handle_callback))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     def _is_allowed(self, user_id: int) -> bool:
@@ -88,8 +92,11 @@ class BotListener:
         lines = [f"📋 *백로그 ({len(pending)}건)*\n"]
         for i, item in enumerate(pending, 1):
             label = "🔴" if item["priority"] >= 8 else "🟡" if item["priority"] >= 5 else "🟢"
+            summary = item["summary"][:80]
+            for ch in ["_", "*", "[", "]", "`"]:
+                summary = summary.replace(ch, f"\\{ch}")
             lines.append(
-                f"{i}. {label} `[{item['domain']}]` {item['summary']}\n"
+                f"{i}. {label} [{item['domain']}] {summary}\n"
                 f"   ID: `{item['id']}` | 우선순위: {item['priority']}/10"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
@@ -101,6 +108,112 @@ class BotListener:
         summary = AssetManager().net_worth_summary()
         await update.message.reply_text("💼 *전체 자산 현황*\n\n" + summary, parse_mode="Markdown")
 
+    async def _handle_python(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_allowed(update.effective_user.id):
+            return
+        from pathlib import Path
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        base = Path.home() / "PycharmProjects"
+        if not base.exists():
+            await update.message.reply_text("📂 ~/PycharmProjects 디렉토리를 찾을 수 없습니다.")
+            return
+
+        projects = sorted(
+            d for d in base.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        )
+        if not projects:
+            await update.message.reply_text("📂 Python 프로젝트가 없습니다.")
+            return
+
+        buttons = [
+            [InlineKeyboardButton(f"🐍 {p.name}", callback_data=f"pyproj:{p.name}")]
+            for p in projects
+        ]
+        keyboard = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text(
+            f"📂 *~/PycharmProjects 프로젝트 목록* ({len(projects)}개)\n어떤 프로젝트가 궁금하세요?",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+    async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """인라인 버튼(지금/나중에) 콜백 처리."""
+        query = update.callback_query
+        await query.answer()
+
+        if not self._is_allowed(query.from_user.id):
+            return
+
+        try:
+            parts = query.data.split(":", 1)
+            action = parts[0]
+            payload = parts[1] if len(parts) > 1 else ""
+            chat_id = query.message.chat_id
+
+            if action == "pyproj":
+                await query.edit_message_reply_markup(reply_markup=None)
+                await self._send_project_info(chat_id, payload)
+                return
+
+            await query.edit_message_reply_markup(reply_markup=None)  # 버튼 제거
+            await self.router.handle_callback(action, payload, chat_id)
+        except Exception as e:
+            logger.error(f"Callback error: {e}", exc_info=True)
+
+    async def _send_project_info(self, chat_id: int, project_name: str):
+        """프로젝트 상세 정보(파일 목록, 최근 실행 이력)를 Telegram으로 전송."""
+        from pathlib import Path
+        import subprocess, json
+
+        proj_dir = Path.home() / "PycharmProjects" / project_name
+        if not proj_dir.exists():
+            await self.app.bot.send_message(chat_id=chat_id, text=f"❌ 프로젝트를 찾을 수 없습니다: {project_name}")
+            return
+
+        # 최상위 .py 파일 목록
+        py_files = sorted(f.name for f in proj_dir.iterdir() if f.suffix == ".py" and f.is_file())
+        has_venv = (proj_dir / ".venv").exists()
+        has_req = (proj_dir / "requirements.txt").exists()
+
+        # 최근 수정 파일
+        all_py = sorted(
+            [f for f in proj_dir.rglob("*.py") if ".venv" not in str(f) and "__pycache__" not in str(f)],
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        recent_file = all_py[0].name if all_py else "-"
+
+        # git 최근 커밋 (있으면)
+        git_log = ""
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(proj_dir), "log", "--oneline", "-3"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                git_log = "\n".join(f"  `{line}`" for line in result.stdout.strip().splitlines())
+        except Exception:
+            pass
+
+        lines = [
+            f"🐍 *{project_name}*",
+            f"📁 경로: `~/PycharmProjects/{project_name}`",
+            f"",
+            f"📄 최상위 py 파일: {', '.join(py_files) or '-'}",
+            f"🕐 최근 수정: `{recent_file}`",
+            f"{'✅ venv 있음' if has_venv else '❌ venv 없음'} | {'✅ requirements.txt' if has_req else '❌ requirements.txt 없음'}",
+        ]
+        if git_log:
+            lines += [f"", f"📝 최근 커밋:", git_log]
+
+        await self.app.bot.send_message(
+            chat_id=chat_id,
+            text="\n".join(lines),
+            parse_mode="Markdown",
+        )
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_allowed(update.effective_user.id):
             logger.warning(f"Unauthorized access attempt from user {update.effective_user.id}")
@@ -111,12 +224,24 @@ class BotListener:
         text = update.message.text
         logger.info(f"Message from {user_id}: {text[:80]}")
 
+        await update.message.reply_text("⏳ 처리 중...")
+
         try:
-            await self.router.route(
-                message=text,
+            await asyncio.wait_for(
+                self.router.route(
+                    message=text,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    message_id=update.message.message_id,
+                ),
+                timeout=95,
+            )
+        except asyncio.TimeoutError as e:
+            logger.error(f"Handler timeout for message: {text[:80]}")
+            await self.error_recovery.handle(
+                RuntimeError("응답 시간 초과 (95s)"),
                 chat_id=chat_id,
-                user_id=user_id,
-                message_id=update.message.message_id,
+                context="handler_timeout",
             )
         except Exception as e:
             logger.error(f"Unhandled error routing message: {e}", exc_info=True)

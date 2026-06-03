@@ -28,3 +28,12 @@ class TelegramSender:
 
     async def send_plain(self, chat_id: int, text: str) -> bool:
         return await self.send(chat_id, text, parse_mode=None)
+
+    async def send_with_reply_markup(self, chat_id: int, text: str, reply_markup) -> bool:
+        try:
+            async with Bot(token=self.token) as bot:
+                await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+            return True
+        except TelegramError as e:
+            logger.error(f"Telegram send_with_reply_markup error to {chat_id}: {e}")
+            return False

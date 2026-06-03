@@ -8,7 +8,11 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+CLAUDE_HANGABOT = "@Claude_hangabot"
+
+
 class ErrorKind(Enum):
+    CREDIT_EXHAUSTED = "credit_exhausted"
     RATE_LIMIT = "rate_limit"
     NETWORK = "network"
     AUTH = "auth"
@@ -18,7 +22,12 @@ class ErrorKind(Enum):
 
 class ErrorRecovery:
     def classify(self, exc: Exception) -> ErrorKind:
+        import asyncio
+        if isinstance(exc, asyncio.TimeoutError):
+            return ErrorKind.NETWORK
         msg = str(exc).lower()
+        if "credit balance is too low" in msg or "credit" in msg and "low" in msg:
+            return ErrorKind.CREDIT_EXHAUSTED
         if "rate limit" in msg or "429" in msg:
             return ErrorKind.RATE_LIMIT
         if "network" in msg or "connection" in msg or "timeout" in msg:
@@ -41,10 +50,15 @@ class ErrorRecovery:
         sender = TelegramSender()
 
         messages = {
-            ErrorKind.RATE_LIMIT: "⏳ Claude API 요청 한도에 도달했습니다. 잠시 후 자동으로 재시도합니다.",
-            ErrorKind.NETWORK: "🌐 네트워크 오류가 발생했습니다. 인터넷 연결을 확인해주세요.",
+            ErrorKind.CREDIT_EXHAUSTED: (
+                f"💳 *Jarvis API 크레딧 소진*\n"
+                f"이 요청은 AI 처리가 필요해서 Jarvis가 처리할 수 없어요.\n\n"
+                f"👉 {CLAUDE_HANGABOT} 으로 같은 내용을 보내주세요."
+            ),
+            ErrorKind.RATE_LIMIT: "⏳ Claude API 요청 한도 도달. 잠시 후 자동 재시도합니다.",
+            ErrorKind.NETWORK: "⏱️ 응답 시간 초과 (95초). Claude CLI가 오래 걸리고 있습니다. 잠시 후 다시 시도해주세요.",
             ErrorKind.AUTH: "🔑 인증 오류입니다. API 키를 확인해주세요.",
             ErrorKind.DATA: f"📋 데이터 처리 오류: `{exc}`",
-            ErrorKind.UNKNOWN: f"⚠️ 예상치 못한 오류 발생 [{context}]: `{exc}`",
+            ErrorKind.UNKNOWN: f"⚠️ 오류 발생 [{context}]: `{exc}`",
         }
         await sender.send(chat_id, messages.get(kind, str(exc)))
