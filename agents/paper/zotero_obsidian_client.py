@@ -309,6 +309,43 @@ class ZoteroObsidianClient:
                     if self._update_collections(item, to_add):
                         atomic_assigned += 1
 
+            # ── A2. Method 조합 컬렉션 (method 태그 2개 이상인 경우) ─────────
+            method_parent_key = top_by_name.get("Method")
+            method_combo_assigned = 0
+
+            if method_parent_key:
+                for item in all_items:
+                    data = item["data"]
+                    methods = sorted(set(
+                        tag_obj["tag"].split(":", 1)[1].strip().lower()
+                        for tag_obj in data.get("tags", [])
+                        if ":" in tag_obj["tag"]
+                        and tag_obj["tag"].split(":", 1)[0].lower() == "method"
+                    ))
+                    if len(methods) < 2:
+                        continue
+
+                    combo_name = " + ".join(methods)
+                    if (method_parent_key, combo_name) not in sub_by_key:
+                        resp = self.zot.create_collections(
+                            [{"name": combo_name, "parentCollection": method_parent_key}]
+                        )
+                        succ = resp.get("successful", {})
+                        if succ:
+                            ckey = list(succ.values())[0].get("key", "")
+                            if ckey:
+                                sub_by_key[(method_parent_key, combo_name)] = ckey
+                                created_count += 1
+                                logger.info(f"Created method combo 'Method/{combo_name}'")
+
+                    ckey = sub_by_key.get((method_parent_key, combo_name))
+                    if not ckey:
+                        continue
+                    current_keys = set(data.get("collections", []))
+                    if ckey not in current_keys:
+                        if self._update_collections(item, {ckey}):
+                            method_combo_assigned += 1
+
             # ── B. 조합 컬렉션 (구형 flat tags, TAG_TO_COLLECTION) ────────
             def _short(col_name: str) -> str:
                 return COLLECTION_ABBREV.get(col_name, col_name.upper())
@@ -370,12 +407,130 @@ class ZoteroObsidianClient:
             if created_count:
                 lines.append(f"✨ 신규 컬렉션 생성: {created_count}개")
             lines.append(f"🗂 계층형 할당 (atomic): {atomic_assigned}편")
+            if method_combo_assigned:
+                lines.append(f"🔀 method 조합 컬렉션 할당: {method_combo_assigned}편")
             lines.append(f"🗂 조합형 할당 (flat): {flat_assigned}편")
             lines.append(f"📄 전체 논문: {len(all_items)}편")
             return "\n".join(lines)
 
         except Exception as e:
             logger.error(f"sync_collections_from_tags error: {e}", exc_info=True)
+            return f"⚠️ 컬렉션 동기화 오류: {e}"
+
+    def sync_items_collections(self, item_keys: list[str]) -> str:
+        """지정된 Zotero 항목에만 컬렉션 동기화. 신규 논문 추가 직후 경량 호출용.
+
+        - atomic tags → Domain/Method/Problem 계층 컬렉션
+        - method 태그 2개 이상 → Method/{a + b + ...} 조합 컬렉션
+        """
+        if not self.zot or not item_keys:
+            return "항목 없음"
+
+        ATOMIC_PARENTS = {"domain": "Domain", "method": "Method", "problem": "Problem"}
+
+        try:
+            # 컬렉션 인덱스 로드
+            all_cols = self.zot.collections()
+            top_by_name: dict[str, str] = {}
+            sub_by_key: dict[tuple[str, str], str] = {}
+            for c in all_cols:
+                d = c["data"]
+                name, key = d["name"], d["key"]
+                parent = d.get("parentCollection", False)
+                if not parent:
+                    top_by_name[name] = key
+                else:
+                    sub_by_key[(parent, name)] = key
+
+            created_count = 0
+            assigned = 0
+
+            for zot_key in item_keys:
+                try:
+                    item = self.zot.item(zot_key)
+                except Exception as e:
+                    logger.warning(f"항목 로드 실패 {zot_key}: {e}")
+                    continue
+
+                data = item["data"]
+                needed_keys: set[str] = set()
+                method_vals: list[str] = []
+
+                for tag_obj in data.get("tags", []):
+                    tag = tag_obj["tag"].strip()
+                    if ":" not in tag:
+                        continue
+                    group, sub = tag.split(":", 1)
+                    parent_display = ATOMIC_PARENTS.get(group.lower())
+                    if not parent_display:
+                        continue
+
+                    # 부모 컬렉션 없으면 생성
+                    if parent_display not in top_by_name:
+                        resp = self.zot.create_collections(
+                            [{"name": parent_display, "parentCollection": False}]
+                        )
+                        succ = resp.get("successful", {})
+                        if succ:
+                            pkey = list(succ.values())[0].get("key", "")
+                            if pkey:
+                                top_by_name[parent_display] = pkey
+                                created_count += 1
+
+                    pkey = top_by_name.get(parent_display)
+                    if not pkey:
+                        continue
+
+                    # 자식 컬렉션 없으면 생성
+                    if (pkey, sub) not in sub_by_key:
+                        resp = self.zot.create_collections(
+                            [{"name": sub, "parentCollection": pkey}]
+                        )
+                        succ = resp.get("successful", {})
+                        if succ:
+                            ckey = list(succ.values())[0].get("key", "")
+                            if ckey:
+                                sub_by_key[(pkey, sub)] = ckey
+                                created_count += 1
+
+                    ckey = sub_by_key.get((pkey, sub))
+                    if ckey:
+                        needed_keys.add(ckey)
+
+                    if group.lower() == "method":
+                        method_vals.append(sub.strip().lower())
+
+                # method 조합 컬렉션
+                method_parent_key = top_by_name.get("Method")
+                if method_parent_key and len(method_vals) >= 2:
+                    combo_name = " + ".join(sorted(set(method_vals)))
+                    if (method_parent_key, combo_name) not in sub_by_key:
+                        resp = self.zot.create_collections(
+                            [{"name": combo_name, "parentCollection": method_parent_key}]
+                        )
+                        succ = resp.get("successful", {})
+                        if succ:
+                            ckey = list(succ.values())[0].get("key", "")
+                            if ckey:
+                                sub_by_key[(method_parent_key, combo_name)] = ckey
+                                created_count += 1
+                                logger.info(f"Created method combo 'Method/{combo_name}'")
+                    ckey = sub_by_key.get((method_parent_key, combo_name))
+                    if ckey:
+                        needed_keys.add(ckey)
+
+                current_keys = set(data.get("collections", []))
+                to_add = needed_keys - current_keys
+                if to_add and self._update_collections(item, to_add):
+                    assigned += 1
+
+            parts = [f"📚 컬렉션 동기화: {assigned}/{len(item_keys)}편"]
+            if created_count:
+                parts.append(f"✨ 신규 컬렉션 {created_count}개 생성")
+            return " | ".join(parts)
+
+        except Exception as e:
+            logger.error(f"sync_items_collections error: {e}", exc_info=True)
             return f"⚠️ 컬렉션 동기화 오류: {e}"
 
     # ------------------------------------------------------------------ #
