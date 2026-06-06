@@ -48,7 +48,7 @@ class CalendarAgent:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         try:
-            raw = await claude_ask(message, system=_PARSE_SYSTEM.format(now=now), max_tokens=256)
+            raw = await claude_ask(message, system=_PARSE_SYSTEM.format(now=now), max_tokens=256, no_tools=True)
             raw = re.sub(r"```[a-z]*\n?", "", raw).strip()
             parsed = json.loads(raw)
         except Exception as e:
@@ -64,7 +64,7 @@ class CalendarAgent:
         elif action == "delete":
             return self._delete(parsed)
         else:
-            reply = await claude_ask(message, system=_CHAT_SYSTEM, max_tokens=256)
+            reply = await claude_ask(message, system=_CHAT_SYSTEM, max_tokens=256, no_tools=True)
             return reply
 
     def _add(self, parsed: dict) -> str:

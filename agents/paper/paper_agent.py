@@ -99,7 +99,7 @@ class PaperAgent:
         context = self._build_context(papers)
         try:
             prompt = f"내 라이브러리 최근 논문 ({len(papers)}편, 신규):\n{context}\n\n요청: {intent.raw_message}"
-            result = await claude_ask(prompt, system=_SYSTEM, max_tokens=1024)
+            result = await claude_ask(prompt, system=_SYSTEM, max_tokens=1024, no_tools=True)
             sent_keys.update(p["key"] for p in papers if p.get("key"))
             _save_sent_keys(sent_keys)
             return result
@@ -133,6 +133,7 @@ class PaperAgent:
             f"다음 논문들의 트렌드, 공통점, 차이점을 분석해줘:\n{context}",
             system=_SYSTEM,
             max_tokens=2048,
+            no_tools=True,
         )
         sent_keys.update(p["key"] for p in papers if p.get("key"))
         _save_sent_keys(sent_keys)

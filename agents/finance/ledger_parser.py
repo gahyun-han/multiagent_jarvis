@@ -36,7 +36,7 @@ class LedgerParser:
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         hint = f"(오늘={today}, 어제={yesterday})"
         try:
-            raw = await claude_ask(f"{hint}\n{message}", system=_SYSTEM_PROMPT, max_tokens=512)
+            raw = await claude_ask(f"{hint}\n{message}", system=_SYSTEM_PROMPT, max_tokens=512, no_tools=True)
             result = json.loads(raw)
             if isinstance(result, dict):
                 return [result]
