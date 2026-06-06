@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 from systems.claude_runner import async_ask as claude_ask
-from agents.paper.zotero_obsidian_client import ZoteroObsidianClient, TAG_TO_COLLECTION
+from agents.paper.zotero_client import ZoteroClient, TAG_TO_COLLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def _save_sent_keys(keys: set):
 
 class PaperAgent:
     def __init__(self):
-        self.library = ZoteroObsidianClient()
+        self.library = ZoteroClient()
 
     async def handle(self, intent) -> str:
         msg = intent.raw_message.lower()
