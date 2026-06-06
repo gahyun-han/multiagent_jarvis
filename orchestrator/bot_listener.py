@@ -140,43 +140,27 @@ class BotListener:
         )
 
     async def _handle_notebooklm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Zotero 컬렉션 목록을 인라인 버튼으로 보여줌.
-
-        하위 컬렉션이 있는 폴더(Domain/Method/Problem)를 상단에 배치하고,
-        나머지 단일 컬렉션은 2열로 하단에 배치한다.
-        """
+        """Zotero 폴더형 컬렉션(Domain/Method/Problem)만 표시."""
         if not self._is_allowed(update.effective_user.id):
             return
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         await update.message.reply_text("⏳ Zotero 컬렉션 목록 불러오는 중…")
         try:
-            folders, leaves = await asyncio.to_thread(self._fetch_nlm_top_cols)
-            if not folders and not leaves:
+            folders, _ = await asyncio.to_thread(self._fetch_nlm_top_cols)
+            if not folders:
                 await update.message.reply_text("⚠️ Zotero 컬렉션을 불러올 수 없습니다.")
                 return
 
-            buttons = []
-            # 폴더형 컬렉션 (하위 있음) — 1열, 상단
-            if folders:
-                for key, name in folders:
-                    buttons.append([InlineKeyboardButton(f"📂 {name}", callback_data=f"nlm_top:{key}")])
-
-            # 단일 컬렉션 — 2열, 하단
-            leaf_btns = [
-                InlineKeyboardButton(f"📄 {name}", callback_data=f"nlm_top:{key}")
-                for key, name in leaves
+            buttons = [
+                [InlineKeyboardButton(f"📂 {name}", callback_data=f"nlm_top:{key}")]
+                for key, name in folders
             ]
-            for i in range(0, len(leaf_btns), 2):
-                buttons.append(leaf_btns[i:i + 2])
+            buttons.append([InlineKeyboardButton("❌ 취소", callback_data="nlm_cancel")])
 
-            keyboard = InlineKeyboardMarkup(buttons)
-            total = len(folders) + len(leaves)
-            folder_note = f"📂 하위 폴더 있음: {', '.join(n for _, n in folders)}\n" if folders else ""
             await update.message.reply_text(
-                f"📓 *NotebookLM 업로드* ({total}개)\n{folder_note}컬렉션을 선택하세요.",
-                reply_markup=keyboard,
-                parse_mode="Markdown",
+                "📓 NotebookLM 업로드\n어떤 폴더를 선택할까요?",
+                reply_markup=InlineKeyboardMarkup(buttons),
             )
         except Exception as e:
             logger.error(f"_handle_notebooklm error: {e}", exc_info=True)
@@ -263,6 +247,10 @@ class BotListener:
                 await self._handle_nlm_top(query, payload, chat_id)
                 return
 
+            if action == "nlm_cancel":
+                await query.edit_message_text("❌ 취소되었습니다.")
+                return
+
             if action == "nlm_page":
                 # payload: "{parent_key}:{offset}"
                 p_key, _, offset_str = payload.rpartition(":")
@@ -319,7 +307,7 @@ class BotListener:
                 InlineKeyboardButton(f"└ {sub_name[:42]}", callback_data=f"nlm_upload:{sub_key}")
             ])
 
-        # 페이지 이동 버튼
+        # 페이지 이동 + 취소 버튼
         nav = []
         if offset > 0:
             nav.append(InlineKeyboardButton("◀ 이전", callback_data=f"nlm_page:{top_key}:{offset - page_size}"))
@@ -327,6 +315,7 @@ class BotListener:
             nav.append(InlineKeyboardButton("다음 ▶", callback_data=f"nlm_page:{top_key}:{offset + page_size}"))
         if nav:
             buttons.append(nav)
+        buttons.append([InlineKeyboardButton("❌ 취소", callback_data="nlm_cancel")])
 
         keyboard = InlineKeyboardMarkup(buttons)
         await query.edit_message_text(
