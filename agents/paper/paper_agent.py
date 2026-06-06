@@ -129,9 +129,10 @@ class PaperAgent:
                 await sender.send(chat_id, f"⚠️ 컬렉션 동기화 오류: {e}")
 
     async def _bg_notebooklm_upload(self, raw_message: str, chat_id: int):
-        """특정 컬렉션(또는 전체)을 NotebookLM에 업로드하고 완료 시 Telegram 알림."""
+        """특정 컬렉션(또는 전체)을 NotebookLM에 업로드 + 분석 질문 + Obsidian 저장."""
         from systems.telegram_sender import TelegramSender
         from agents.paper.notebooklm_uploader import upload_papers
+        from agents.paper.obsidian_client import ObsidianClient
         sender = TelegramSender()
         try:
             col_name = self._parse_collection_name(raw_message)
@@ -145,10 +146,26 @@ class PaperAgent:
 
             label = f"'{col_name}'" if col_name else "전체 라이브러리"
             notebook_title = f"PaperRadar — {col_name}" if col_name else "PaperRadar — AI/DT 논문"
-            added, errors = await asyncio.to_thread(upload_papers, papers, notebook_title)
-            msg = f"📓 NotebookLM 업로드 완료 ({label})\n✅ {added}/{len(papers)}편 추가"
+            added, errors, answer = await asyncio.to_thread(
+                upload_papers, papers, notebook_title, True  # ask_question=True
+            )
+            msg = f"📓 NotebookLM 완료 ({label})\n✅ {added}/{len(papers)}편 추가"
             if errors:
                 msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
+
+            if answer and col_name:
+                obs = ObsidianClient()
+                try:
+                    saved_path = await asyncio.to_thread(
+                        obs.save_analysis, col_name, answer, len(papers)
+                    )
+                    msg += f"\n📝 Obsidian 저장: `NotebookLM/{saved_path.name}`"
+                except Exception as e:
+                    logger.error(f"Obsidian save error: {e}")
+                    msg += f"\n⚠️ Obsidian 저장 실패: {e}"
+                preview = answer[:500] + ("…" if len(answer) > 500 else "")
+                msg += f"\n\n📊 *분석 미리보기*\n{preview}"
+
             if chat_id:
                 await sender.send(chat_id, msg)
         except Exception as e:
@@ -157,9 +174,10 @@ class PaperAgent:
                 await sender.send(chat_id, f"⚠️ NotebookLM 업로드 오류: {e}")
 
     async def upload_collection_by_key(self, col_key: str, chat_id: int):
-        """컬렉션 키로 직접 NotebookLM 업로드 (bot_listener 콜백에서 호출)."""
+        """컬렉션 키로 직접 NotebookLM 업로드 + 분석 질문 + Obsidian 저장."""
         from systems.telegram_sender import TelegramSender
         from agents.paper.notebooklm_uploader import upload_papers
+        from agents.paper.obsidian_client import ObsidianClient
         sender = TelegramSender()
         try:
             col_path, papers = await asyncio.to_thread(self._get_col_path_and_papers, col_key)
@@ -167,13 +185,41 @@ class PaperAgent:
                 if chat_id:
                     await sender.send(chat_id, f"⚠️ '{col_path}' 컬렉션에 URL이 있는 논문이 없습니다.")
                 return
+
             if chat_id:
-                await sender.send(chat_id, f"📓 *{col_path}* 업로드 시작 ({len(papers)}편)…")
+                await sender.send(
+                    chat_id,
+                    f"📓 *{col_path}* 업로드 + 분석 시작 ({len(papers)}편)…\n"
+                    f"소스 처리 후 질문 전송까지 수 분 소요됩니다.",
+                )
+
             notebook_title = f"PaperRadar — {col_path}"
-            added, errors = await asyncio.to_thread(upload_papers, papers, notebook_title)
-            msg = f"📓 NotebookLM 완료\n*{col_path}*\n✅ {added}/{len(papers)}편 추가"
+            added, errors, answer = await asyncio.to_thread(
+                upload_papers, papers, notebook_title, True  # ask_question=True
+            )
+
+            msg = f"📓 NotebookLM 완료 — *{col_path}*\n✅ {added}/{len(papers)}편 추가"
             if errors:
                 msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
+
+            if answer:
+                # Obsidian에 저장
+                obs = ObsidianClient()
+                try:
+                    saved_path = await asyncio.to_thread(
+                        obs.save_analysis, col_path, answer, len(papers)
+                    )
+                    msg += f"\n📝 Obsidian 저장 완료: `NotebookLM/{saved_path.name}`"
+                except Exception as e:
+                    logger.error(f"Obsidian save error: {e}")
+                    msg += f"\n⚠️ Obsidian 저장 실패: {e}"
+
+                # 분석 결과 미리보기 (처음 500자)
+                preview = answer[:500] + ("…" if len(answer) > 500 else "")
+                msg += f"\n\n📊 *분석 결과 미리보기*\n{preview}"
+            else:
+                msg += "\n⚠️ 분석 질문 결과 없음 (소스 처리 중일 수 있음)"
+
             if chat_id:
                 await sender.send(chat_id, msg)
         except Exception as e:
