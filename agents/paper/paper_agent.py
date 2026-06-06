@@ -149,9 +149,9 @@ class PaperAgent:
             added, errors, answer = await asyncio.to_thread(
                 upload_papers, papers, notebook_title, True  # ask_question=True
             )
-            msg = f"📓 NotebookLM 완료 ({label})\n✅ {added}/{len(papers)}편 추가"
+            summary = f"📓 NotebookLM 완료 ({label})\n✅ {added}/{len(papers)}편 추가"
             if errors:
-                msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
+                summary += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
 
             if answer and col_name:
                 obs = ObsidianClient()
@@ -159,15 +159,17 @@ class PaperAgent:
                     saved_path = await asyncio.to_thread(
                         obs.save_analysis, col_name, answer, len(papers)
                     )
-                    msg += f"\n📝 Obsidian 저장: `NotebookLM/{saved_path.name}`"
+                    summary += f"\n📝 Obsidian 저장: NotebookLM/{saved_path.parent.name}/{saved_path.name}"
                 except Exception as e:
                     logger.error(f"Obsidian save error: {e}")
-                    msg += f"\n⚠️ Obsidian 저장 실패: {e}"
-                preview = answer[:500] + ("…" if len(answer) > 500 else "")
-                msg += f"\n\n📊 *분석 미리보기*\n{preview}"
+                    summary += f"\n⚠️ Obsidian 저장 실패: {e}"
 
             if chat_id:
-                await sender.send(chat_id, msg)
+                await sender.send_plain(chat_id, summary)
+
+            if answer and col_name and chat_id:
+                header = f"📊 분석 결과 — {col_name}\n{'─'*30}\n"
+                await sender.send_chunks(chat_id, header + answer, chunk_size=3800)
         except Exception as e:
             logger.error(f"bg_notebooklm_upload error: {e}", exc_info=True)
             if chat_id:
@@ -198,30 +200,31 @@ class PaperAgent:
                 upload_papers, papers, notebook_title, True  # ask_question=True
             )
 
-            msg = f"📓 NotebookLM 완료 — *{col_path}*\n✅ {added}/{len(papers)}편 추가"
+            # ── 1. 완료 요약 메시지 (plain text, 안전) ──────────────────
+            summary = f"📓 NotebookLM 완료 — {col_path}\n✅ {added}/{len(papers)}편 추가"
             if errors:
-                msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
+                summary += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
 
             if answer:
-                # Obsidian에 저장
                 obs = ObsidianClient()
                 try:
                     saved_path = await asyncio.to_thread(
                         obs.save_analysis, col_path, answer, len(papers)
                     )
-                    msg += f"\n📝 Obsidian 저장 완료: `NotebookLM/{saved_path.name}`"
+                    summary += f"\n📝 Obsidian 저장: NotebookLM/{saved_path.parent.name}/{saved_path.name}"
                 except Exception as e:
                     logger.error(f"Obsidian save error: {e}")
-                    msg += f"\n⚠️ Obsidian 저장 실패: {e}"
-
-                # 분석 결과 미리보기 (처음 500자)
-                preview = answer[:500] + ("…" if len(answer) > 500 else "")
-                msg += f"\n\n📊 *분석 결과 미리보기*\n{preview}"
+                    summary += f"\n⚠️ Obsidian 저장 실패: {e}"
             else:
-                msg += "\n⚠️ 분석 질문 결과 없음 (소스 처리 중일 수 있음)"
+                summary += "\n⚠️ 분석 결과 없음 (소스 처리 중일 수 있음)"
 
             if chat_id:
-                await sender.send(chat_id, msg)
+                await sender.send_plain(chat_id, summary)
+
+            # ── 2. 분석 결과 별도 메시지 (1000자씩 청크) ────────────────
+            if answer and chat_id:
+                header = f"📊 분석 결과 — {col_path}\n{'─'*30}\n"
+                await sender.send_chunks(chat_id, header + answer, chunk_size=3800)
         except Exception as e:
             logger.error(f"upload_collection_by_key error: {e}", exc_info=True)
             if chat_id:
