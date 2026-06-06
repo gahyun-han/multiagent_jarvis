@@ -140,24 +140,41 @@ class BotListener:
         )
 
     async def _handle_notebooklm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Zotero 컬렉션 목록을 인라인 버튼으로 보여줌."""
+        """Zotero 컬렉션 목록을 인라인 버튼으로 보여줌.
+
+        하위 컬렉션이 있는 폴더(Domain/Method/Problem)를 상단에 배치하고,
+        나머지 단일 컬렉션은 2열로 하단에 배치한다.
+        """
         if not self._is_allowed(update.effective_user.id):
             return
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         await update.message.reply_text("⏳ Zotero 컬렉션 목록 불러오는 중…")
         try:
-            cols = await asyncio.to_thread(self._fetch_nlm_top_cols)
-            if not cols:
+            folders, leaves = await asyncio.to_thread(self._fetch_nlm_top_cols)
+            if not folders and not leaves:
                 await update.message.reply_text("⚠️ Zotero 컬렉션을 불러올 수 없습니다.")
                 return
-            buttons = [
-                [InlineKeyboardButton(f"📁 {name}", callback_data=f"nlm_top:{key}")]
-                for key, name in cols
+
+            buttons = []
+            # 폴더형 컬렉션 (하위 있음) — 1열, 상단
+            if folders:
+                for key, name in folders:
+                    buttons.append([InlineKeyboardButton(f"📂 {name}", callback_data=f"nlm_top:{key}")])
+
+            # 단일 컬렉션 — 2열, 하단
+            leaf_btns = [
+                InlineKeyboardButton(f"📄 {name}", callback_data=f"nlm_top:{key}")
+                for key, name in leaves
             ]
+            for i in range(0, len(leaf_btns), 2):
+                buttons.append(leaf_btns[i:i + 2])
+
             keyboard = InlineKeyboardMarkup(buttons)
+            total = len(folders) + len(leaves)
+            folder_note = f"📂 하위 폴더 있음: {', '.join(n for _, n in folders)}\n" if folders else ""
             await update.message.reply_text(
-                f"📓 *NotebookLM 업로드*\n어떤 컬렉션을 업로드할까요? ({len(cols)}개)",
+                f"📓 *NotebookLM 업로드* ({total}개)\n{folder_note}컬렉션을 선택하세요.",
                 reply_markup=keyboard,
                 parse_mode="Markdown",
             )
@@ -165,19 +182,37 @@ class BotListener:
             logger.error(f"_handle_notebooklm error: {e}", exc_info=True)
             await update.message.reply_text(f"⚠️ 오류: {e}")
 
-    def _fetch_nlm_top_cols(self) -> list[tuple[str, str]]:
-        """Zotero 최상위 컬렉션 (key, name) 목록 반환."""
+    def _fetch_nlm_top_cols(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Zotero 최상위 컬렉션을 (폴더목록, 단일목록) 으로 분리해 반환.
+
+        폴더: 하위 컬렉션이 1개 이상 있는 컬렉션 (Domain, Method, Problem 등)
+        단일: 하위 컬렉션이 없는 컬렉션
+        """
         from agents.paper.zotero_client import ZoteroClient
         zc = ZoteroClient()
         if not zc.zot:
-            return []
+            return [], []
         all_cols = zc.zot.everything(zc.zot.collections())
+        # 하위 컬렉션을 가진 부모 키 집합
+        parent_keys = {
+            c["data"]["parentCollection"]
+            for c in all_cols
+            if c["data"].get("parentCollection", False)
+        }
         top = [
             (c["data"]["key"], c["data"]["name"])
             for c in all_cols
             if not c["data"].get("parentCollection", False)
         ]
-        return sorted(top, key=lambda x: x[1])
+        folders = sorted(
+            [(k, n) for k, n in top if k in parent_keys],
+            key=lambda x: x[1].lower(),
+        )
+        leaves = sorted(
+            [(k, n) for k, n in top if k not in parent_keys],
+            key=lambda x: x[1].lower(),
+        )
+        return folders, leaves
 
     def _fetch_nlm_sub_cols(self, top_key: str) -> list[tuple[str, str]]:
         """특정 최상위 컬렉션의 하위 컬렉션 (key, name) 목록 반환."""
@@ -191,7 +226,7 @@ class BotListener:
             for c in all_cols
             if c["data"].get("parentCollection", "") == top_key
         ]
-        return sorted(subs, key=lambda x: x[1])
+        return sorted(subs, key=lambda x: x[1].lower())
 
     def _fetch_col_name(self, col_key: str) -> str:
         """컬렉션 키로 이름 반환."""
@@ -228,6 +263,12 @@ class BotListener:
                 await self._handle_nlm_top(query, payload, chat_id)
                 return
 
+            if action == "nlm_page":
+                # payload: "{parent_key}:{offset}"
+                p_key, _, offset_str = payload.rpartition(":")
+                await self._handle_nlm_page(query, p_key, int(offset_str), chat_id)
+                return
+
             if action == "nlm_upload":
                 await query.edit_message_reply_markup(reply_markup=None)
                 await self._handle_nlm_upload(chat_id, payload)
@@ -238,31 +279,59 @@ class BotListener:
         except Exception as e:
             logger.error(f"Callback error: {e}", exc_info=True)
 
-    async def _handle_nlm_top(self, query, top_key: str, chat_id: int):
-        """최상위 컬렉션 클릭 → 하위 컬렉션 목록 또는 바로 업로드."""
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    _NLM_PAGE_SIZE = 20  # 한 페이지에 보여줄 하위 컬렉션 수
 
+    async def _handle_nlm_top(self, query, top_key: str, chat_id: int):
+        """최상위 컬렉션 클릭 → 하위 컬렉션 목록(첫 페이지) 또는 바로 업로드."""
         top_name = await asyncio.to_thread(self._fetch_col_name, top_key)
         subs = await asyncio.to_thread(self._fetch_nlm_sub_cols, top_key)
 
         if not subs:
-            # 하위 컬렉션 없음 → 바로 업로드
             await query.edit_message_reply_markup(reply_markup=None)
             await self._handle_nlm_upload(chat_id, top_key)
             return
 
+        await self._render_sub_page(query, top_key, top_name, subs, offset=0)
+
+    async def _handle_nlm_page(self, query, top_key: str, offset: int, chat_id: int):
+        """하위 컬렉션 페이지 이동."""
+        top_name = await asyncio.to_thread(self._fetch_col_name, top_key)
+        subs = await asyncio.to_thread(self._fetch_nlm_sub_cols, top_key)
+        await self._render_sub_page(query, top_key, top_name, subs, offset)
+
+    async def _render_sub_page(self, query, top_key: str, top_name: str,
+                                subs: list, offset: int):
+        """하위 컬렉션 목록을 페이지 단위로 렌더링."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        page_size = self._NLM_PAGE_SIZE
+        page_subs = subs[offset:offset + page_size]
+        total = len(subs)
+        page_num = offset // page_size + 1
+        total_pages = (total + page_size - 1) // page_size
+
         buttons = [
-            [InlineKeyboardButton(f"📂 전체 ({top_name})", callback_data=f"nlm_upload:{top_key}")]
+            [InlineKeyboardButton(f"📂 전체 업로드 ({top_name}, {total}개)",
+                                  callback_data=f"nlm_upload:{top_key}")]
         ]
-        for sub_key, sub_name in subs:
-            label = sub_name[:40]
-            buttons.append([InlineKeyboardButton(f"  └ {label}", callback_data=f"nlm_upload:{sub_key}")])
+        for sub_key, sub_name in page_subs:
+            buttons.append([
+                InlineKeyboardButton(f"└ {sub_name[:42]}", callback_data=f"nlm_upload:{sub_key}")
+            ])
+
+        # 페이지 이동 버튼
+        nav = []
+        if offset > 0:
+            nav.append(InlineKeyboardButton("◀ 이전", callback_data=f"nlm_page:{top_key}:{offset - page_size}"))
+        if offset + page_size < total:
+            nav.append(InlineKeyboardButton("다음 ▶", callback_data=f"nlm_page:{top_key}:{offset + page_size}"))
+        if nav:
+            buttons.append(nav)
 
         keyboard = InlineKeyboardMarkup(buttons)
         await query.edit_message_text(
-            f"📁 *{top_name}* — 하위 컬렉션을 선택하세요 ({len(subs)}개)",
+            f"📁 {top_name} — 하위 컬렉션 선택 ({page_num}/{total_pages}페이지, 총 {total}개)",
             reply_markup=keyboard,
-            parse_mode="Markdown",
         )
 
     async def _handle_nlm_upload(self, chat_id: int, col_key: str):
