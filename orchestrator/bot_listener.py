@@ -42,6 +42,7 @@ class BotListener:
         self.app.add_handler(CommandHandler("backlog", self._handle_backlog))
         self.app.add_handler(CommandHandler("assets", self._handle_assets))
         self.app.add_handler(CommandHandler("python", self._handle_python))
+        self.app.add_handler(CommandHandler("notebooklm", self._handle_notebooklm))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
@@ -138,8 +139,74 @@ class BotListener:
             parse_mode="Markdown",
         )
 
+    async def _handle_notebooklm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Zotero 컬렉션 목록을 인라인 버튼으로 보여줌."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        await update.message.reply_text("⏳ Zotero 컬렉션 목록 불러오는 중…")
+        try:
+            cols = await asyncio.to_thread(self._fetch_nlm_top_cols)
+            if not cols:
+                await update.message.reply_text("⚠️ Zotero 컬렉션을 불러올 수 없습니다.")
+                return
+            buttons = [
+                [InlineKeyboardButton(f"📁 {name}", callback_data=f"nlm_top:{key}")]
+                for key, name in cols
+            ]
+            keyboard = InlineKeyboardMarkup(buttons)
+            await update.message.reply_text(
+                f"📓 *NotebookLM 업로드*\n어떤 컬렉션을 업로드할까요? ({len(cols)}개)",
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"_handle_notebooklm error: {e}", exc_info=True)
+            await update.message.reply_text(f"⚠️ 오류: {e}")
+
+    def _fetch_nlm_top_cols(self) -> list[tuple[str, str]]:
+        """Zotero 최상위 컬렉션 (key, name) 목록 반환."""
+        from agents.paper.zotero_client import ZoteroClient
+        zc = ZoteroClient()
+        if not zc.zot:
+            return []
+        all_cols = zc.zot.everything(zc.zot.collections())
+        top = [
+            (c["data"]["key"], c["data"]["name"])
+            for c in all_cols
+            if not c["data"].get("parentCollection", False)
+        ]
+        return sorted(top, key=lambda x: x[1])
+
+    def _fetch_nlm_sub_cols(self, top_key: str) -> list[tuple[str, str]]:
+        """특정 최상위 컬렉션의 하위 컬렉션 (key, name) 목록 반환."""
+        from agents.paper.zotero_client import ZoteroClient
+        zc = ZoteroClient()
+        if not zc.zot:
+            return []
+        all_cols = zc.zot.everything(zc.zot.collections())
+        subs = [
+            (c["data"]["key"], c["data"]["name"])
+            for c in all_cols
+            if c["data"].get("parentCollection", "") == top_key
+        ]
+        return sorted(subs, key=lambda x: x[1])
+
+    def _fetch_col_name(self, col_key: str) -> str:
+        """컬렉션 키로 이름 반환."""
+        from agents.paper.zotero_client import ZoteroClient
+        zc = ZoteroClient()
+        if not zc.zot:
+            return col_key
+        all_cols = zc.zot.everything(zc.zot.collections())
+        for c in all_cols:
+            if c["data"]["key"] == col_key:
+                return c["data"]["name"]
+        return col_key
+
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """인라인 버튼(지금/나중에) 콜백 처리."""
+        """인라인 버튼 콜백 처리."""
         query = update.callback_query
         await query.answer()
 
@@ -157,10 +224,56 @@ class BotListener:
                 await self._send_project_info(chat_id, payload)
                 return
 
+            if action == "nlm_top":
+                await self._handle_nlm_top(query, payload, chat_id)
+                return
+
+            if action == "nlm_upload":
+                await query.edit_message_reply_markup(reply_markup=None)
+                await self._handle_nlm_upload(chat_id, payload)
+                return
+
             await query.edit_message_reply_markup(reply_markup=None)  # 버튼 제거
             await self.router.handle_callback(action, payload, chat_id)
         except Exception as e:
             logger.error(f"Callback error: {e}", exc_info=True)
+
+    async def _handle_nlm_top(self, query, top_key: str, chat_id: int):
+        """최상위 컬렉션 클릭 → 하위 컬렉션 목록 또는 바로 업로드."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        top_name = await asyncio.to_thread(self._fetch_col_name, top_key)
+        subs = await asyncio.to_thread(self._fetch_nlm_sub_cols, top_key)
+
+        if not subs:
+            # 하위 컬렉션 없음 → 바로 업로드
+            await query.edit_message_reply_markup(reply_markup=None)
+            await self._handle_nlm_upload(chat_id, top_key)
+            return
+
+        buttons = [
+            [InlineKeyboardButton(f"📂 전체 ({top_name})", callback_data=f"nlm_upload:{top_key}")]
+        ]
+        for sub_key, sub_name in subs:
+            label = sub_name[:40]
+            buttons.append([InlineKeyboardButton(f"  └ {label}", callback_data=f"nlm_upload:{sub_key}")])
+
+        keyboard = InlineKeyboardMarkup(buttons)
+        await query.edit_message_text(
+            f"📁 *{top_name}* — 하위 컬렉션을 선택하세요 ({len(subs)}개)",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+    async def _handle_nlm_upload(self, chat_id: int, col_key: str):
+        """선택한 컬렉션을 NotebookLM에 백그라운드 업로드."""
+        from agents.paper.paper_agent import PaperAgent
+        agent = PaperAgent()
+        await self.app.bot.send_message(
+            chat_id=chat_id,
+            text="📓 NotebookLM 업로드를 백그라운드에서 시작합니다…",
+        )
+        asyncio.create_task(agent.upload_collection_by_key(col_key, chat_id))
 
     async def _send_project_info(self, chat_id: int, project_name: str):
         """프로젝트 상세 정보(파일 목록, 최근 실행 이력)를 Telegram으로 전송."""

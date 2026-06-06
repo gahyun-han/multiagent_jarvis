@@ -134,7 +134,6 @@ class PaperAgent:
         from agents.paper.notebooklm_uploader import upload_papers
         sender = TelegramSender()
         try:
-            # 메시지에서 컬렉션명 추출 (없으면 전체)
             col_name = self._parse_collection_name(raw_message)
             papers = await asyncio.to_thread(self._get_papers_for_nlm, col_name)
 
@@ -145,7 +144,8 @@ class PaperAgent:
                 return
 
             label = f"'{col_name}'" if col_name else "전체 라이브러리"
-            added, errors = await asyncio.to_thread(upload_papers, papers)
+            notebook_title = f"PaperRadar — {col_name}" if col_name else "PaperRadar — AI/DT 논문"
+            added, errors = await asyncio.to_thread(upload_papers, papers, notebook_title)
             msg = f"📓 NotebookLM 업로드 완료 ({label})\n✅ {added}/{len(papers)}편 추가"
             if errors:
                 msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
@@ -155,6 +155,53 @@ class PaperAgent:
             logger.error(f"bg_notebooklm_upload error: {e}", exc_info=True)
             if chat_id:
                 await sender.send(chat_id, f"⚠️ NotebookLM 업로드 오류: {e}")
+
+    async def upload_collection_by_key(self, col_key: str, chat_id: int):
+        """컬렉션 키로 직접 NotebookLM 업로드 (bot_listener 콜백에서 호출)."""
+        from systems.telegram_sender import TelegramSender
+        from agents.paper.notebooklm_uploader import upload_papers
+        sender = TelegramSender()
+        try:
+            col_path, papers = await asyncio.to_thread(self._get_col_path_and_papers, col_key)
+            if not papers:
+                if chat_id:
+                    await sender.send(chat_id, f"⚠️ '{col_path}' 컬렉션에 URL이 있는 논문이 없습니다.")
+                return
+            if chat_id:
+                await sender.send(chat_id, f"📓 *{col_path}* 업로드 시작 ({len(papers)}편)…")
+            notebook_title = f"PaperRadar — {col_path}"
+            added, errors = await asyncio.to_thread(upload_papers, papers, notebook_title)
+            msg = f"📓 NotebookLM 완료\n*{col_path}*\n✅ {added}/{len(papers)}편 추가"
+            if errors:
+                msg += f"\n⚠️ 오류 {len(errors)}건: {errors[0]}"
+            if chat_id:
+                await sender.send(chat_id, msg)
+        except Exception as e:
+            logger.error(f"upload_collection_by_key error: {e}", exc_info=True)
+            if chat_id:
+                await sender.send(chat_id, f"⚠️ NotebookLM 업로드 오류: {e}")
+
+    def _get_col_path_and_papers(self, col_key: str) -> tuple[str, list[dict]]:
+        """컬렉션 키로 경로명 + 논문 목록 반환."""
+        zot = self.library.zot
+        if not zot:
+            return col_key, []
+        all_cols = zot.everything(zot.collections())
+        col_by_key = {c["data"]["key"]: c["data"] for c in all_cols}
+        col_data = col_by_key.get(col_key, {})
+        name = col_data.get("name", col_key)
+        parent_key = col_data.get("parentCollection", "")
+        if parent_key and parent_key in col_by_key:
+            col_path = f"{col_by_key[parent_key]['name']}/{name}"
+        else:
+            col_path = name
+        items = zot.everything(zot.collection_items(col_key))
+        papers = [
+            {"url": i["data"].get("url", ""), "title": i["data"].get("title", "")}
+            for i in items
+            if i["data"].get("itemType") != "attachment" and i["data"].get("url")
+        ]
+        return col_path, papers
 
     def _parse_collection_name(self, message: str) -> str | None:
         """메시지에서 컬렉션명 추출. 예: 'Domain/robotics NLM 올려줘' → 'Domain/robotics'"""

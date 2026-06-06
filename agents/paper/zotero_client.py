@@ -116,6 +116,38 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _build_col_index(all_cols: list) -> tuple[dict, dict]:
+    """컬렉션 목록 → (top_by_name, sub_by_key) 인덱스 생성.
+
+    중복 이름이 있을 때 first-wins 전략을 사용하고,
+    중복 부모 키를 canonical 키로 정규화하여 매번 새 컬렉션이
+    생성되는 버그를 방지한다.
+    """
+    # 1단계: top-level (first wins)
+    top_by_name: dict[str, str] = {}
+    dup_key_map: dict[str, str] = {}  # 중복 키 → canonical 키
+
+    for c in all_cols:
+        d = c["data"]
+        if not d.get("parentCollection", False):
+            if d["name"] not in top_by_name:
+                top_by_name[d["name"]] = d["key"]
+            else:
+                dup_key_map[d["key"]] = top_by_name[d["name"]]
+
+    # 2단계: sub-collections — 부모 키를 canonical로 정규화 후 first wins
+    sub_by_key: dict[tuple[str, str], str] = {}
+    for c in all_cols:
+        d = c["data"]
+        parent = d.get("parentCollection", False)
+        if parent:
+            canonical_parent = dup_key_map.get(parent, parent)
+            if (canonical_parent, d["name"]) not in sub_by_key:
+                sub_by_key[(canonical_parent, d["name"])] = d["key"]
+
+    return top_by_name, sub_by_key
+
+
 class ZoteroClient:
     def __init__(self):
         api_key = os.getenv("ZOTERO_API_KEY")
@@ -203,20 +235,7 @@ class ZoteroClient:
         try:
             # ── 0. 기존 컬렉션 전체 로드 ─────────────────────────────────
             all_cols = self.zot.everything(self.zot.collections())
-
-            # top-level name → key
-            top_by_name: dict[str, str] = {}
-            # (parent_key, child_name) → child_key
-            sub_by_key: dict[tuple[str, str], str] = {}
-
-            for c in all_cols:
-                data = c["data"]
-                name, key = data["name"], data["key"]
-                parent = data.get("parentCollection", False)
-                if not parent:
-                    top_by_name[name] = key
-                else:
-                    sub_by_key[(parent, name)] = key
+            top_by_name, sub_by_key = _build_col_index(all_cols)
 
             # ── 1. 모든 논문 로드 ─────────────────────────────────────────
             all_items = [
@@ -417,16 +436,7 @@ class ZoteroClient:
         try:
             # 컬렉션 인덱스 로드
             all_cols = self.zot.everything(self.zot.collections())
-            top_by_name: dict[str, str] = {}
-            sub_by_key: dict[tuple[str, str], str] = {}
-            for c in all_cols:
-                d = c["data"]
-                name, key = d["name"], d["key"]
-                parent = d.get("parentCollection", False)
-                if not parent:
-                    top_by_name[name] = key
-                else:
-                    sub_by_key[(parent, name)] = key
+            top_by_name, sub_by_key = _build_col_index(all_cols)
 
             created_count = 0
             assigned = 0

@@ -8,10 +8,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-NOTEBOOK_TITLE = "PaperRadar — AI/DT 논문"
+NLM_TITLE_PREFIX = "PaperRadar"
 
 
-async def _upload_urls(urls: list[str]) -> tuple[int, list[str]]:
+async def _upload_urls(urls: list[str], notebook_title: str = "PaperRadar — AI/DT 논문") -> tuple[int, list[str]]:
     try:
         from notebooklm import NotebookLMClient
         from notebooklm.exceptions import NotebookLMError, AuthError
@@ -27,12 +27,12 @@ async def _upload_urls(urls: list[str]) -> tuple[int, list[str]]:
     try:
         async with NotebookLMClient.from_storage() as client:
             notebooks = await client.notebooks.list()
-            notebook = next((nb for nb in notebooks if nb.title == NOTEBOOK_TITLE), None)
+            notebook = next((nb for nb in notebooks if nb.title == notebook_title), None)
             if notebook is None:
-                notebook = await client.notebooks.create(title=NOTEBOOK_TITLE)
-                logger.info(f"NotebookLM 노트북 생성: {NOTEBOOK_TITLE}")
+                notebook = await client.notebooks.create(title=notebook_title)
+                logger.info(f"NotebookLM 노트북 생성: {notebook_title}")
             else:
-                logger.info(f"NotebookLM 기존 노트북 사용: {notebook.id}")
+                logger.info(f"NotebookLM 기존 노트북 사용: {notebook.id} ({notebook_title})")
 
             for url in urls:
                 try:
@@ -49,12 +49,12 @@ async def _upload_urls(urls: list[str]) -> tuple[int, list[str]]:
     return added, errors
 
 
-def upload_urls(urls: list[str]) -> tuple[int, list[str]]:
-    return asyncio.run(_upload_urls(urls))
+def upload_urls(urls: list[str], notebook_title: str = "PaperRadar — AI/DT 논문") -> tuple[int, list[str]]:
+    return asyncio.run(_upload_urls(urls, notebook_title=notebook_title))
 
 
-def upload_papers(papers: list[dict]) -> tuple[int, list[str]]:
+def upload_papers(papers: list[dict], notebook_title: str = "PaperRadar — AI/DT 논문") -> tuple[int, list[str]]:
     """papers: list of dicts with 'url' or 'link' key."""
     urls = [p.get("url") or p.get("link", "") for p in papers]
     urls = [u for u in urls if u]
-    return upload_urls(urls)
+    return upload_urls(urls, notebook_title=notebook_title)
