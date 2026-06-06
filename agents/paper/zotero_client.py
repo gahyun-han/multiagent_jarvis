@@ -202,7 +202,7 @@ class ZoteroClient:
             return "⚠️ Zotero 연결 없음"
         try:
             # ── 0. 기존 컬렉션 전체 로드 ─────────────────────────────────
-            all_cols = self.zot.collections()
+            all_cols = self.zot.everything(self.zot.collections())
 
             # top-level name → key
             top_by_name: dict[str, str] = {}
@@ -416,7 +416,7 @@ class ZoteroClient:
 
         try:
             # 컬렉션 인덱스 로드
-            all_cols = self.zot.collections()
+            all_cols = self.zot.everything(self.zot.collections())
             top_by_name: dict[str, str] = {}
             sub_by_key: dict[tuple[str, str], str] = {}
             for c in all_cols:
