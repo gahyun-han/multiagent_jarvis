@@ -110,8 +110,9 @@ class IntentClassifier:
             )
 
         # 2단계: 키워드 사전 판별 (LLM 호출 없이 즉시 분류)
+        msg_lower = message.lower()
         for keywords, domain, urgency in _KEYWORD_RULES:
-            if any(kw in message for kw in keywords):
+            if any(kw.lower() in msg_lower for kw in keywords):
                 logger.info(f"Pre-classified: domain={domain} urgency={urgency}")
                 return Intent(
                     domain=domain, urgency=urgency,

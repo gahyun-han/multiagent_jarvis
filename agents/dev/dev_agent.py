@@ -48,7 +48,7 @@ class DevAgent:
             return await self._run_fix(intent)
 
         try:
-            return await claude_ask(message, system=_SYSTEM, max_tokens=2048)
+            return await claude_ask(message, system=_SYSTEM, max_tokens=2048, no_tools=True)
         except Exception as e:
             logger.error(f"DevAgent error: {e}")
             return f"💻 개발 도움 처리 중 오류: {e}"
