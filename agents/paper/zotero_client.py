@@ -222,11 +222,8 @@ class ZoteroClient:
     def sync_collections_from_tags(self) -> str:
         """두 태그 체계를 동시에 처리합니다.
 
-        [A] Atomic tags (domain:X / method:X / problem:X)
+        Atomic tags (domain:X / method:X / problem:X)
             → 계층형 컬렉션: Domain/manufacturing, Method/rag, Problem/scheduling …
-
-        [B] 구형 flat tags (dt, rl, sim, …, TAG_TO_COLLECTION 기준)
-            → 조합 컬렉션: DT + RAG, DT + LLM … (기존 로직 유지)
         """
         from itertools import combinations as _comb
 
@@ -351,62 +348,6 @@ class ZoteroClient:
                         if self._update_collections(item, {ckey}):
                             method_combo_assigned += 1
 
-            # ── B. 조합 컬렉션 (구형 flat tags, TAG_TO_COLLECTION) ────────
-            def _short(col_name: str) -> str:
-                return COLLECTION_ABBREV.get(col_name, col_name.upper())
-
-            paper_shorts: dict[str, list[str]] = {}
-            for item in all_items:
-                data = item["data"]
-                item_key = data["key"]
-                seen_cols: set[str] = set()
-                shorts: list[str] = []
-                for tag_obj in data.get("tags", []):
-                    tag = tag_obj["tag"].lower().strip()
-                    if ":" not in tag and tag in TAG_TO_COLLECTION:
-                        col = TAG_TO_COLLECTION[tag]
-                        if col not in seen_cols:
-                            seen_cols.add(col)
-                            shorts.append(_short(col))
-                if shorts:
-                    paper_shorts[item_key] = sorted(set(shorts))
-
-            paper_needed: dict[str, set[str]] = {}
-            for item_key, shorts in paper_shorts.items():
-                if len(shorts) == 1:
-                    paper_needed[item_key] = {shorts[0]}
-                else:
-                    paper_needed[item_key] = {
-                        f"{a} + {b}" for a, b in _comb(sorted(shorts), 2)
-                    }
-
-            # flat 컬렉션 없으면 생성 (top-level)
-            needed_flat = {n for names in paper_needed.values() for n in names}
-            for name in sorted(needed_flat):
-                if name not in top_by_name:
-                    resp = self.zot.create_collections([{"name": name, "parentCollection": False}])
-                    succ = resp.get("successful", {})
-                    if succ:
-                        ckey = list(succ.values())[0].get("key", "")
-                        if ckey:
-                            top_by_name[name] = ckey
-                            created_count += 1
-                            logger.info(f"Created flat collection '{name}' ({ckey})")
-
-            flat_assigned = 0
-            for item in all_items:
-                data = item["data"]
-                item_key = data["key"]
-                if item_key not in paper_needed:
-                    continue
-                needed_keys = {top_by_name[n] for n in paper_needed[item_key] if n in top_by_name}
-                current_keys = set(data.get("collections", []))
-                to_add = needed_keys - current_keys
-                if not to_add:
-                    continue
-                if self._update_collections(item, to_add):
-                    flat_assigned += 1
-
             # ── 결과 ──────────────────────────────────────────────────────
             lines = ["📚 *Zotero 컬렉션 동기화 완료*"]
             if created_count:
@@ -414,7 +355,6 @@ class ZoteroClient:
             lines.append(f"🗂 계층형 할당 (atomic): {atomic_assigned}편")
             if method_combo_assigned:
                 lines.append(f"🔀 method 조합 컬렉션 할당: {method_combo_assigned}편")
-            lines.append(f"🗂 조합형 할당 (flat): {flat_assigned}편")
             lines.append(f"📄 전체 논문: {len(all_items)}편")
             return "\n".join(lines)
 
