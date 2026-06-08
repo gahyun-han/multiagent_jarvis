@@ -12,7 +12,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CLAUDE_BIN = shutil.which("claude") or "/Users/hanga/.npm-global/bin/claude"
-_TIMEOUT = 90  # subprocess timeout (seconds) — 이벤트 루프 블로킹 최대 시간
+_TIMEOUT = 180  # subprocess timeout (seconds) — Node.js 시작 + API 응답 포함, 여유 있게 설정
 
 
 def ask(prompt: str, system: str = "", model: str = "claude-sonnet-4-6",
