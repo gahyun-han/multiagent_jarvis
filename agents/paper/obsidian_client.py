@@ -27,6 +27,65 @@ class ObsidianClient:
                 pass
         return notes
 
+    def find_note(self, query: str) -> Path | None:
+        """쿼리 키워드와 가장 일치하는 노트 파일 반환.
+
+        Inbox/ 는 신규 생성 전용이므로 검색 제외.
+        매칭 비율(일치 단어 수 / 파일명 단어 수)이 높을수록 우선.
+        """
+        query_clean = query.lower().replace(".md", "").strip()
+        words = [w for w in query_clean.split() if len(w) > 1]
+        if not words:
+            return None
+        inbox = self.vault_path / "Inbox"
+        best: Path | None = None
+        best_score = 0.0
+        for md_file in self.vault_path.glob("**/*.md"):
+            try:
+                md_file.relative_to(inbox)
+                continue  # Inbox 하위 파일 건너뜀
+            except ValueError:
+                pass
+            name = md_file.stem.lower()
+            name_words = [w for w in name.split() if len(w) > 1] or [name]
+            matches = sum(1 for w in words if w in name)
+            if matches == 0:
+                continue
+            score = matches / len(name_words)
+            if score > best_score:
+                best_score = score
+                best = md_file
+        return best if best_score > 0 else None
+
+    def append_to_note(self, filepath: Path, content: str) -> Path:
+        """기존 노트 파일 끝에 내용 추가."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        existing = filepath.read_text(encoding="utf-8") if filepath.exists() else ""
+        separator = "\n\n---\n" if existing.strip() else ""
+        filepath.write_text(
+            f"{existing}{separator}*{now} 추가*\n\n{content}\n",
+            encoding="utf-8",
+        )
+        return filepath
+
+    def add_note(self, content: str, title: str | None = None, folder: str = "Inbox") -> Path:
+        """임의 내용을 vault/folder/ 아래 새 노트로 저장."""
+        now = datetime.now()
+        if not title:
+            first_line = content.split("\n")[0].strip()
+            title = first_line[:40] if first_line else now.strftime("%Y-%m-%d %H%M")
+
+        target = self.vault_path / folder
+        target.mkdir(parents=True, exist_ok=True)
+
+        filepath = target / (_safe_filename(title) + ".md")
+        date_str = now.strftime("%Y-%m-%d %H:%M")
+        filepath.write_text(
+            f"---\ncreated: {date_str}\n---\n\n# {title}\n\n{content}\n",
+            encoding="utf-8",
+        )
+        return filepath
+
     def save_analysis(
         self,
         collection_path: str,

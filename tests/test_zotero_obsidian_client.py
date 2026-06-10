@@ -73,12 +73,12 @@ def test_init_no_credentials():
 
 def test_init_custom_vault_path(monkeypatch):
     monkeypatch.setenv("OBSIDIAN_VAULT_PATH", "/home/user/vault")
-    client = ZoteroClient()
+    client = ObsidianClient()
     assert client.vault_path == Path("/home/user/vault")
 
 
 def test_init_default_vault_path():
-    client = ZoteroClient()
+    client = ObsidianClient()
     assert client.vault_path == Path("")
 
 
@@ -169,112 +169,112 @@ def test_search_papers_empty_query(monkeypatch):
     assert mock_zot.items.call_args.kwargs["q"] == ""
 
 
-# --- get_obsidian_notes ---
+# --- get_notes ---
 
-def test_get_obsidian_notes_happy_path(tmp_path):
+def test_get_notes_happy_path(tmp_path):
     papers = tmp_path / "papers"
     papers.mkdir()
     content = "a" * 100
     (papers / "note.md").write_text(content, encoding="utf-8")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert len(notes) == 1
     assert notes[0]["filename"] == "note.md"
     assert notes[0]["content"] == content
 
 
-def test_get_obsidian_notes_subfolder_missing(tmp_path):
-    client = ZoteroClient()
+def test_get_notes_subfolder_missing(tmp_path):
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert notes == []
 
 
-def test_get_obsidian_notes_default_subfolder(tmp_path):
+def test_get_notes_default_subfolder(tmp_path):
     papers = tmp_path / "papers"
     papers.mkdir()
     (papers / "default.md").write_text("some content", encoding="utf-8")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert len(notes) == 1
     assert notes[0]["filename"] == "default.md"
 
 
-def test_get_obsidian_notes_custom_subfolder(tmp_path):
+def test_get_notes_custom_subfolder(tmp_path):
     research = tmp_path / "research"
     research.mkdir()
     (research / "study.md").write_text("study content", encoding="utf-8")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes(subfolder="research")
+    notes = client.get_notes(subfolder="research")
 
     assert len(notes) == 1
     assert notes[0]["filename"] == "study.md"
     assert notes[0]["content"] == "study content"
 
 
-def test_get_obsidian_notes_content_truncated_at_2000(tmp_path):
+def test_get_notes_content_truncated_at_2000(tmp_path):
     papers = tmp_path / "papers"
     papers.mkdir()
     (papers / "long.md").write_text("x" * 5000, encoding="utf-8")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert len(notes[0]["content"]) == 2000
 
 
-def test_get_obsidian_notes_recursive_glob(tmp_path):
+def test_get_notes_recursive_glob(tmp_path):
     subdir = tmp_path / "papers" / "subdir"
     subdir.mkdir(parents=True)
     (subdir / "deep.md").write_text("deep content", encoding="utf-8")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert any(n["filename"] == "deep.md" for n in notes)
 
 
-def test_get_obsidian_notes_non_md_files_ignored(tmp_path):
+def test_get_notes_non_md_files_ignored(tmp_path):
     papers = tmp_path / "papers"
     papers.mkdir()
     (papers / "note.txt").write_text("text content", encoding="utf-8")
     (papers / "paper.pdf").write_bytes(b"%PDF data")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert notes == []
 
 
-def test_get_obsidian_notes_unreadable_file_skipped(tmp_path):
+def test_get_notes_unreadable_file_skipped(tmp_path):
     papers = tmp_path / "papers"
     papers.mkdir()
     (papers / "good.md").write_text("good content", encoding="utf-8")
     (papers / "bad.md").write_bytes(b"\xff\xfe\x80\x81\x82")
 
-    client = ZoteroClient()
+    client = ObsidianClient()
     client.vault_path = tmp_path
 
-    notes = client.get_obsidian_notes()
+    notes = client.get_notes()
 
     assert len(notes) == 1
     assert notes[0]["filename"] == "good.md"

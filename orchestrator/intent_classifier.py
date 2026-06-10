@@ -10,7 +10,7 @@ from systems.claude_runner import async_ask as claude_ask_async
 
 logger = logging.getLogger(__name__)
 
-Domain = Literal["calendar", "paper", "finance", "dev", "usage", "backlog", "triage", "unknown"]
+Domain = Literal["calendar", "paper", "finance", "dev", "usage", "backlog", "triage", "youtube", "unknown"]
 Urgency = Literal["immediate", "backlog"]
 
 
@@ -73,6 +73,10 @@ _KEYWORD_RULES: list[tuple[list[str], str, str]] = [
       "태그 검색", "태그로 찾", "태그 조합", "태그 필터",
       "landscape", "라이브러리 분석", "논문 통계", "논문 현황",
       "저자 통계", "연도별 논문"],                          "paper",    "immediate"),
+    (["옵시디언에", "옵시디언 저장", "옵시디언 메모", "옵시디언에 추가", "옵시디언에 적어",
+      "obsidian에", "obsidian 저장",
+      ".md에 ", ".md에\n"],                                "paper",    "immediate"),
+    (["youtube.com", "youtu.be"],                          "youtube",  "immediate"),
     (["코드 리뷰", "버그", "테스트 코드", "autotest", "자동 테스트", "자동테스트",
       ".py 수정", ".py 고쳐", "코드 수정", "소스 수정", "파일 수정"],             "dev", "immediate"),
     # 외부 프로젝트 실행/수정 요청

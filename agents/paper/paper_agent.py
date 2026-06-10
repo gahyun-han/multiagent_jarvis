@@ -24,6 +24,8 @@ _LANDSCAPE_KWS   = ["landscape", "라이브러리 분석", "논문 통계", "논
 _TAG_SEARCH_KWS = ["태그 검색", "태그로 찾", "태그 조합", "태그 필터"]
 _NLM_KWS = ["notebooklm", "노트북lm", "노트북 lm", "nlm에", "nlm으로", "nlm 올려", "nlm에 올려",
             "노트북에 올려", "노트북으로 올려"]
+_OBS_WRITE_KWS = ["옵시디언에", "옵시디언 저장", "옵시디언 메모", "옵시디언에 추가", "옵시디언에 적어",
+                  "obsidian에", "obsidian 저장"]
 # "dt AND rl" 또는 "dt OR agent" 형태 감지
 _AND_OR_RE = re.compile(r'([\w-]+)\s+(AND|OR)\s+([\w-]+(?:\s+(?:AND|OR)\s+[\w-]+)*)', re.IGNORECASE)
 
@@ -33,6 +35,43 @@ You have access to their Zotero library and Obsidian notes.
 Reply in Korean unless asked otherwise.
 Be concise but insightful. Highlight connections between papers.
 """.strip()
+
+
+def _parse_obs_request(message: str) -> tuple[str | None, str]:
+    """메시지에서 (파일 참조, 저장할 내용) 분리.
+
+    패턴 A: "X.md에 CONTENT 추가해줘"  → file_ref=X, content=CONTENT
+    패턴 B: "옵시디언에 FILE_DESC 거기에 CONTENT 추가해줘" → file_ref=FILE_DESC, content=CONTENT
+    패턴 C: "옵시디언에 CONTENT 추가해줘"  → file_ref=None, content=CONTENT
+    """
+    # 패턴 A: "파일명.md에 ... 추가/저장/적어줘"
+    m = re.match(r'^(.+?\.md)\s*에\s+(.+?)(?:\s+(?:추가|저장|적어|넣어)\s*해?\s*줘?\.?)?$',
+                 message, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).replace(".md", "").strip(), _strip_action_suffix(m.group(2))
+
+    # 옵시디언 prefix 제거
+    text = re.sub(
+        r'^옵시디언\s*(?:에다가|에다|에)?\s*|^obsidian\s*(?:에다가|에다|에)?\s*',
+        '', message, flags=re.IGNORECASE,
+    ).strip()
+
+    # 패턴 B: "FILE_DESC 거기에 CONTENT 추가해줘"
+    m = re.search(r'^(.+?)\s+거기에\s+(.+)', text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), _strip_action_suffix(m.group(2))
+
+    # 패턴 C: 파일 참조 없음
+    return None, _strip_action_suffix(text)
+
+
+def _strip_action_suffix(text: str) -> str:
+    text = re.sub(
+        r'\s*(?:적어서\s*)?(?:추가|저장|메모|기록)\s*해\s*줘?\s*$|'
+        r'\s*적어\s*줘?\s*$|\s*넣어\s*줘?\s*$',
+        '', text.strip(), flags=re.IGNORECASE,
+    )
+    return text.strip().strip('"').strip('"').strip()
 
 
 def _load_sent_keys() -> set:
@@ -71,6 +110,10 @@ class PaperAgent:
             chat_id = getattr(intent, "chat_id", 0)
             asyncio.create_task(self._bg_sync_collections(chat_id))
             return "🔄 컬렉션 동기화를 백그라운드에서 시작했습니다.\n논문 수가 많아 수 분 소요될 수 있습니다. 완료 시 알림 드릴게요."
+
+        # Obsidian 직접 노트 저장
+        if any(kw in msg for kw in _OBS_WRITE_KWS):
+            return await self._handle_obsidian_write(intent.raw_message)
 
         # NotebookLM 업로드 — "Domain/robotics NotebookLM에 올려줘"
         if any(kw in msg for kw in _NLM_KWS):
@@ -251,6 +294,27 @@ class PaperAgent:
             if i["data"].get("itemType") != "attachment" and i["data"].get("url")
         ]
         return col_path, papers
+
+    async def _handle_obsidian_write(self, raw_message: str) -> str:
+        file_ref, content = _parse_obs_request(raw_message)
+        if not content:
+            return "⚠️ 옵시디언에 저장할 내용을 찾지 못했습니다."
+        from agents.paper.obsidian_client import ObsidianClient
+        obs = ObsidianClient()
+        try:
+            if file_ref:
+                target = await asyncio.to_thread(obs.find_note, file_ref)
+                if target:
+                    path = await asyncio.to_thread(obs.append_to_note, target, content)
+                    rel = path.relative_to(obs.vault_path)
+                    return f"📝 Obsidian 추가 완료: {rel}"
+                # 파일을 못 찾으면 새 파일로 생성
+            path = await asyncio.to_thread(obs.add_note, content)
+            rel = path.relative_to(obs.vault_path)
+            return f"📝 Obsidian 저장 완료: {rel}"
+        except Exception as e:
+            logger.error(f"Obsidian write error: {e}")
+            return f"⚠️ Obsidian 저장 실패: {e}"
 
     def _parse_collection_name(self, message: str) -> str | None:
         """메시지에서 컬렉션명 추출. 예: 'Domain/robotics NLM 올려줘' → 'Domain/robotics'"""

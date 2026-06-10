@@ -111,6 +111,9 @@ class Router:
         if domain == "backlog":
             from agents.backlog.backlog_agent import BacklogAgent
             return BacklogAgent()
+        if domain == "youtube":
+            from agents.youtube.youtube_agent import YouTubeAgent
+            return YouTubeAgent()
         if domain in ("triage", "unknown"):
             from agents.general.general_agent import GeneralAgent
             return GeneralAgent()

@@ -24,7 +24,7 @@ def _make_papers(n: int) -> list[dict]:
 
 class TestPaperAgentInit:
     def test_init_creates_library_client(self):
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             agent = PaperAgent()
         MockClient.assert_called_once()
         assert agent.library is MockClient.return_value
@@ -33,7 +33,7 @@ class TestPaperAgentInit:
 class TestPaperAgentHandle:
     def test_handle_happy_path(self):
         intent = _make_intent("최근 트랜스포머 논문 알려줘")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(3)
             with patch("agents.paper.paper_agent.claude_ask", return_value="Claude response"):
                 agent = PaperAgent()
@@ -42,17 +42,18 @@ class TestPaperAgentHandle:
 
     def test_handle_empty_library(self):
         intent = _make_intent("요약해줘")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = []
-            with patch("agents.paper.paper_agent.claude_ask", return_value="response") as mock_ask:
-                agent = PaperAgent()
-                asyncio.run(agent.handle(intent))
-        prompt_arg = mock_ask.call_args[0][0]
-        assert "(논문 없음)" in prompt_arg
+            with patch("agents.paper.paper_agent._load_sent_keys", return_value=set()):
+                with patch("agents.paper.paper_agent.claude_ask") as mock_ask:
+                    agent = PaperAgent()
+                    result = asyncio.run(agent.handle(intent))
+        assert result == "📄 새로운 논문이 없습니다. (이미 전송한 논문만 있음)"
+        mock_ask.assert_not_called()
 
     def test_handle_claude_raises_exception(self):
         intent = _make_intent("요약해줘")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(1)
             with patch("agents.paper.paper_agent.claude_ask", side_effect=RuntimeError("timeout")):
                 agent = PaperAgent()
@@ -62,7 +63,7 @@ class TestPaperAgentHandle:
 
     def test_handle_passes_raw_message_in_prompt(self):
         intent = _make_intent("특정 키워드 검색")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(1)
             with patch("agents.paper.paper_agent.claude_ask", return_value="r") as mock_ask:
                 agent = PaperAgent()
@@ -72,7 +73,7 @@ class TestPaperAgentHandle:
 
     def test_handle_uses_correct_system_prompt(self):
         intent = _make_intent("query")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(1)
             with patch("agents.paper.paper_agent.claude_ask", return_value="r") as mock_ask:
                 agent = PaperAgent()
@@ -81,7 +82,7 @@ class TestPaperAgentHandle:
 
     def test_handle_calls_get_recent_papers_with_limit_20(self):
         intent = _make_intent("query")
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             mock_lib = MockClient.return_value
             mock_lib.get_recent_papers.return_value = []
             with patch("agents.paper.paper_agent.claude_ask", return_value="r"):
@@ -92,7 +93,7 @@ class TestPaperAgentHandle:
 
 class TestPaperAgentSummarizeAll:
     def test_summarize_all_happy_path(self):
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(5)
             with patch("agents.paper.paper_agent.claude_ask", return_value="Claude summary") as mock_ask:
                 agent = PaperAgent()
@@ -101,14 +102,14 @@ class TestPaperAgentSummarizeAll:
         assert mock_ask.call_args[1].get("max_tokens") == 2048
 
     def test_summarize_all_empty_library(self):
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = []
             agent = PaperAgent()
             result = asyncio.run(agent.summarize_all())
-        assert result == "📚 Zotero 라이브러리에서 논문을 가져오지 못했습니다."
+        assert result == "📚 새로운 논문이 없습니다."
 
     def test_summarize_all_does_not_call_claude_when_empty(self):
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = []
             with patch("agents.paper.paper_agent.claude_ask") as mock_ask:
                 agent = PaperAgent()
@@ -116,7 +117,7 @@ class TestPaperAgentSummarizeAll:
         mock_ask.assert_not_called()
 
     def test_summarize_all_calls_get_recent_papers_with_limit_20(self):
-        with patch("agents.paper.paper_agent.ZoteroObsidianClient") as MockClient:
+        with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             mock_lib = MockClient.return_value
             mock_lib.get_recent_papers.return_value = _make_papers(3)
             with patch("agents.paper.paper_agent.claude_ask", return_value="r"):

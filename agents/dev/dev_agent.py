@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _AUTOTEST_TRIGGERS = ["autotest", "자동 테스트", "자동테스트", "테스트 자동화"]
+# 개념 설명/비교 질문은 autotest 실행이 아닌 일반 답변으로
+_CONCEPT_SIGNALS = ["차이", "비교", "개념", "설명", "뭐야", "뭔지", "어떤 차이", "어떻게 달라",
+                    "관심있", "알려줘", "무엇", "what is", "difference", "compare"]
 
 # .py 경로가 포함된 메시지에서 수정 요청 감지
 _FIX_TRIGGERS = ["수정", "고쳐", "변경", "추가해줘", "제거해줘", "삭제해줘", "바꿔줘", "fix", "refactor"]
@@ -35,7 +38,9 @@ class DevAgent:
     async def handle(self, intent) -> str:
         message = intent.raw_message
 
-        if any(t in message.lower() for t in _AUTOTEST_TRIGGERS):
+        msg_lower = message.lower()
+        is_concept = any(s in msg_lower for s in _CONCEPT_SIGNALS)
+        if any(t in msg_lower for t in _AUTOTEST_TRIGGERS) and not is_concept:
             return await self._run_autotest(message)
 
         # 프로젝트 이름 + 실행 키워드 → RunAgent

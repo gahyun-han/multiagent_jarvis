@@ -18,7 +18,7 @@ def test_load_returns_empty_when_file_missing(tmp_path):
     missing = tmp_path / "assets.json"
     with _patch_path(missing):
         result = AssetManager().load()
-    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": []}
+    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
 
 
 def test_load_returns_full_structure(tmp_path):
@@ -65,7 +65,7 @@ def test_load_returns_empty_on_invalid_json(tmp_path):
     asset_file.write_text("not json", encoding="utf-8")
     with _patch_path(asset_file):
         result = AssetManager().load()
-    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": []}
+    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
 
 
 def test_load_returns_empty_on_read_permission_error():
@@ -74,7 +74,7 @@ def test_load_returns_empty_on_read_permission_error():
     mock_path.read_text.side_effect = PermissionError("Permission denied")
     with _patch_path(mock_path):
         result = AssetManager().load()
-    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": []}
+    assert result == {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
 
 
 # ── save() ───────────────────────────────────────────────────────────────────
