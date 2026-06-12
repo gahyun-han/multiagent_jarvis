@@ -11,8 +11,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
 
 logger = logging.getLogger(__name__)
 
@@ -173,75 +171,81 @@ def generate_chart(months: int = 4) -> bytes:
     return buf.read()
 
 
-# ── 엑셀 생성 ─────────────────────────────────────────────────────────────────
+# ── 테이블 이미지 생성 ────────────────────────────────────────────────────────
 
-def generate_excel(months: int = 6) -> bytes:
-    """최근 N개월 가계부 Excel bytes 반환."""
+def generate_table_image(months: int = 4) -> bytes:
+    """최근 N개월 가계부 테이블 PNG bytes 반환 (모바일 최적화).
+
+    컬럼: 월 / 총수입 / 고정지출 / 카드지출 / 잔여
+    """
+    _setup_korean_font()
     data = _build_monthly_data(months)
     if not data:
         raise ValueError("스냅샷 데이터 없음")
 
-    wb = openpyxl.Workbook()
+    col_labels = ["월", "총수입(원)", "고정지출(원)", "카드지출(원)", "잔여(원)"]
+    n_cols = len(col_labels)
+    n_rows = len(data)
 
-    # ── Sheet 1: 월별 요약 ─────────────────────────────────────────────────────
-    ws1 = wb.active
-    ws1.title = "월별 요약"
+    cell_text: list[list[str]] = []
+    cell_colors: list[list[str]] = []
 
-    header_fill = PatternFill("solid", fgColor="1F3864")
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    pos_fill = PatternFill("solid", fgColor="E2EFDA")
-    neg_fill = PatternFill("solid", fgColor="FCE4D6")
+    for d in data:
+        rem = d["remainder"]
+        cell_text.append([
+            d["month"][5:] + "월",
+            f"{d['total_income']:,}",
+            f"{d['fixed_expense']:,}",
+            f"{d['card_spend']:,}",
+            f"{rem:+,}",
+        ])
+        rem_bg = "#193319" if rem >= 0 else "#331919"
+        cell_colors.append(["#252535", "#252535", "#252535", "#252535", rem_bg])
 
-    headers = ["월", "총수입(원)", "월급(원)", "추가수입(원)", "고정지출(원)", "카드지출(원)", "총지출(원)", "잔여(원)"]
-    for col, h in enumerate(headers, 1):
-        cell = ws1.cell(row=1, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
+    row_h = 0.48
+    fig_h = row_h * (n_rows + 1) + 0.15
+    fig, ax = plt.subplots(figsize=(7.5, fig_h))
+    fig.patch.set_facecolor("#1e1e2e")
+    ax.set_facecolor("#1e1e2e")
+    ax.axis("off")
 
-    for row_idx, d in enumerate(data, 2):
-        ws1.cell(row=row_idx, column=1, value=d["month"])
-        ws1.cell(row=row_idx, column=2, value=d["total_income"])
-        ws1.cell(row=row_idx, column=3, value=d["salary"])
-        ws1.cell(row=row_idx, column=4, value=d["extra_income"])
-        ws1.cell(row=row_idx, column=5, value=d["fixed_expense"])
-        ws1.cell(row=row_idx, column=6, value=d["card_spend"])
-        ws1.cell(row=row_idx, column=7, value=d["total_expense"])
-        rem_cell = ws1.cell(row=row_idx, column=8, value=d["remainder"])
-        rem_cell.fill = pos_fill if d["remainder"] >= 0 else neg_fill
-        for col in range(2, 9):
-            ws1.cell(row=row_idx, column=col).number_format = "#,##0"
-            ws1.cell(row=row_idx, column=col).alignment = Alignment(horizontal="right")
+    tbl = ax.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        colColours=["#1F3864"] * n_cols,
+        loc="center",
+        cellLoc="right",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9.5)
+    tbl.auto_set_column_width(range(n_cols))
+    tbl.scale(1, 1.35)
 
-    col_widths = [10, 16, 14, 14, 14, 14, 14, 14]
-    for i, w in enumerate(col_widths, 1):
-        ws1.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+    for j in range(n_cols):
+        cell = tbl[0, j]
+        cell.set_text_props(color="#ffffff", fontweight="bold", ha="center")
+        cell.set_edgecolor("#3a3a5a")
+        cell.PAD = 0.04
 
-    # ── Sheet 2: 카드사별 지출 ─────────────────────────────────────────────────
-    ws2 = wb.create_sheet("카드사별 지출")
-    all_cards = sorted({card for d in data for card in d["card_breakdown"].keys()})
-    ws2_headers = ["월"] + all_cards + ["합계"]
-    for col, h in enumerate(ws2_headers, 1):
-        cell = ws2.cell(row=1, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
+    for i in range(1, n_rows + 1):
+        d = data[i - 1]
+        for j in range(n_cols):
+            cell = tbl[i, j]
+            cell.set_edgecolor("#3a3a5a")
+            cell.PAD = 0.04
+            if j == 0:
+                cell.set_text_props(color="#c0c0e0", ha="center")
+            elif j == n_cols - 1:
+                color = "#4ade80" if d["remainder"] >= 0 else "#f87171"
+                cell.set_text_props(color=color, fontweight="bold")
+            else:
+                cell.set_text_props(color="#d0d0e8")
 
-    for row_idx, d in enumerate(data, 2):
-        ws2.cell(row=row_idx, column=1, value=d["month"])
-        for col_idx, card in enumerate(all_cards, 2):
-            amount = d["card_breakdown"].get(card, 0)
-            cell = ws2.cell(row=row_idx, column=col_idx, value=amount)
-            cell.number_format = "#,##0"
-            cell.alignment = Alignment(horizontal="right")
-        total_cell = ws2.cell(row=row_idx, column=len(all_cards) + 2, value=d["card_spend"])
-        total_cell.number_format = "#,##0"
-        total_cell.font = Font(bold=True)
-
-    for i in range(1, len(ws2_headers) + 1):
-        ws2.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 14
-
+    plt.tight_layout(pad=0.0)
     buf = io.BytesIO()
-    wb.save(buf)
+    plt.savefig(buf, format="png", dpi=160, bbox_inches="tight",
+                pad_inches=0.06, facecolor=fig.get_facecolor())
+    plt.close(fig)
     buf.seek(0)
     return buf.read()

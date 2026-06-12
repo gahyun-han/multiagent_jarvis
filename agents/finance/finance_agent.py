@@ -13,7 +13,7 @@ from agents.finance.asset_manager import AssetManager
 from agents.finance.monthly_summary import get_monthly_summary, get_monthly_graph, get_category_detail
 from agents.finance.report_generator import generate_monthly_report
 from agents.finance.sms_parser import parse_and_save
-from agents.finance.chart_generator import generate_chart, generate_excel
+from agents.finance.chart_generator import generate_chart, generate_table_image
 
 logger = logging.getLogger(__name__)
 
@@ -230,10 +230,8 @@ class FinanceAgent:
                 chart_bytes = generate_chart(months)
                 await sender.send_photo(chat_id, chart_bytes, caption=f"📊 최근 {months}개월 수입/지출 추이")
             if want_excel:
-                excel_bytes = generate_excel(months)
-                from datetime import date
-                filename = f"가계부_{date.today().strftime('%Y%m%d')}.xlsx"
-                await sender.send_document(chat_id, excel_bytes, filename=filename, caption=f"📋 최근 {months}개월 가계부 엑셀")
+                table_bytes = generate_table_image(months)
+                await sender.send_photo(chat_id, table_bytes, caption=f"📋 최근 {months}개월 가계부 요약")
             return None
         except Exception as e:
             logger.error(f"Chart/Excel generation error: {e}", exc_info=True)

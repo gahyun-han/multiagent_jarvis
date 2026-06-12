@@ -416,7 +416,7 @@ def test_generate_chart_returns_bytes(tmp_path):
     assert result[:4] == b'\x89PNG'  # PNG magic bytes
 
 
-def test_generate_excel_returns_xlsx(tmp_path):
+def test_generate_table_image_returns_png(tmp_path):
     from agents.finance import chart_generator as cg
     cg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
     cg._TRANSACTIONS_PATH = tmp_path / "transactions.json"
@@ -433,7 +433,6 @@ def test_generate_excel_returns_xlsx(tmp_path):
         {"fixed": {"salary": 9800000, "savings": 200000, "fixed_expenses": []}}
     ))
 
-    result = cg.generate_excel(1)
+    result = cg.generate_table_image(1)
     assert isinstance(result, bytes)
-    # xlsx magic bytes (PK zip)
-    assert result[:2] == b'PK'
+    assert result[:4] == b'\x89PNG'  # PNG magic bytes
