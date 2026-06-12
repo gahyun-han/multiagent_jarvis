@@ -2,6 +2,7 @@
 Obsidian client — Obsidian vault에서 .md 노트를 읽고 쓰는 클라이언트.
 """
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -56,6 +57,53 @@ class ObsidianClient:
                 best_score = score
                 best = md_file
         return best if best_score > 0 else None
+
+    def read_note(self, filepath: Path) -> str:
+        """노트 전체 내용 반환."""
+        return filepath.read_text(encoding="utf-8")
+
+    def search_in_note(self, filepath: Path, query: str) -> list[str]:
+        """query 키워드가 포함된 단락 목록 반환."""
+        content = filepath.read_text(encoding="utf-8")
+        keywords = [w.lower() for w in query.split() if len(w) > 1]
+        if not keywords:
+            return []
+        return [
+            s.strip()
+            for s in re.split(r"\n{2,}", content)
+            if s.strip() and any(kw in s.lower() for kw in keywords)
+        ]
+
+    def search_vault(self, query: str, max_results: int = 5) -> list[dict]:
+        """vault 전체에서 query가 언급된 파일과 해당 단락 반환."""
+        if not self.vault_path or not self.vault_path.exists():
+            return []
+        keywords = [w.lower() for w in query.split() if len(w) > 1]
+        if not keywords:
+            return []
+        results = []
+        for md_file in sorted(self.vault_path.glob("**/*.md")):
+            try:
+                content = md_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if not any(kw in content.lower() for kw in keywords):
+                continue
+            matching = [
+                s.strip()
+                for s in re.split(r"\n{2,}", content)
+                if s.strip() and any(kw in s.lower() for kw in keywords)
+            ]
+            if matching:
+                rel = md_file.relative_to(self.vault_path)
+                results.append({
+                    "filename": md_file.stem,
+                    "rel_path": str(rel),
+                    "sections": matching[:5],
+                })
+            if len(results) >= max_results:
+                break
+        return results
 
     def append_to_note(self, filepath: Path, content: str) -> Path:
         """기존 노트 파일 끝에 내용 추가."""

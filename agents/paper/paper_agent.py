@@ -26,6 +26,14 @@ _NLM_KWS = ["notebooklm", "노트북lm", "노트북 lm", "nlm에", "nlm으로", 
             "노트북에 올려", "노트북으로 올려"]
 _OBS_WRITE_KWS = ["옵시디언에", "옵시디언 저장", "옵시디언 메모", "옵시디언에 추가", "옵시디언에 적어",
                   "옵시디언", "obsidian에", "obsidian 저장", "obsidian"]
+
+# 파일 전체 읽기
+_OBS_SEND_KWS = ["내용 보내줘", "파일 보내줘", "내용 읽어줘", "파일 읽어줘",
+                  "전체 보내줘", "다 보내줘", "내용 보여줘", "내용 알려줘", "전체 내용"]
+# 파일 내 또는 vault 전체 키워드 검색
+_OBS_SEARCH_KWS = ["찾아줘", "찾아봐줘", "부분 찾아",
+                    "에 대한 내용 있어", "에 대한 내용 있나",
+                    "내용 있어", "내용 있나", "관련 내용 찾아", "관련 내용 있어"]
 # "dt AND rl" 또는 "dt OR agent" 형태 감지
 _AND_OR_RE = re.compile(r'([\w-]+)\s+(AND|OR)\s+([\w-]+(?:\s+(?:AND|OR)\s+[\w-]+)*)', re.IGNORECASE)
 
@@ -89,6 +97,53 @@ def _strip_action_suffix(text: str) -> str:
     return text.strip().strip('"').strip('"').strip()
 
 
+def _parse_obs_read_ref(message: str) -> str | None:
+    """읽기 요청에서 파일 참조 추출."""
+    m = re.search(r"([^\s,/]+?)\.md", message, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    m = re.search(
+        r"(?:옵시디언|obsidian)\s+([가-힣\w]+)\s+(?:내용|파일|전체)",
+        message, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _parse_obs_search(message: str) -> tuple[str | None, str]:
+    """(file_ref, query) 파싱 — file_ref=None이면 vault 전체 검색."""
+    # "[파일].md에서 [QUERY] 찾아줘/관련/부분"
+    m = re.search(r"([^\s,/]+?)\.md에서\s+(.+?)\s*(?:찾아|관련|부분)", message, re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    # "옵시디언에서/obsidian에서 [QUERY] 찾아줘/있어" → vault 전체 (파일명 아님)
+    m = re.search(
+        r"(?:옵시디언|obsidian)\s*에서\s+(.+?)\s*(?:찾아|관련|있어|있나)",
+        message, re.IGNORECASE,
+    )
+    if m:
+        return None, m.group(1).strip()
+    # "[파일]에서 [QUERY] 찾아줘" (옵시디언/obsidian/md 컨텍스트, 단 옵시디언 자체는 제외)
+    m = re.search(r"([가-힣\w]+)에서\s+(.+?)\s*(?:찾아|관련|부분)", message, re.IGNORECASE)
+    if m and any(kw in message.lower() for kw in ["옵시디언", "obsidian", ".md"]):
+        file_ref = m.group(1).strip()
+        if file_ref.lower() not in ("옵시디언", "obsidian"):
+            return file_ref, m.group(2).strip()
+    # "[QUERY]에 대한 내용 있어?" (vault 전체)
+    m = re.search(
+        r"(.+?)\s*(?:에\s*대한\s*내용|관련\s*내용)\s*(?:있어|있나|찾아줘?)",
+        message, re.IGNORECASE,
+    )
+    if m:
+        query = re.sub(r"^(?:옵시디언|obsidian)\s*(?:에|에서)?\s*", "", m.group(1), flags=re.IGNORECASE).strip()
+        return None, query
+    # fallback
+    clean = re.sub(r"(?:옵시디언|obsidian)\s*(?:에서|에)?\s*", "", message, flags=re.IGNORECASE)
+    clean = re.sub(r"\s*(?:찾아줘?|있어|있나|관련.*$|에\s*대한.*$)", "", clean, flags=re.IGNORECASE).strip()
+    return None, clean
+
+
 def _load_sent_keys() -> set:
     if SENT_PAPERS_PATH.exists():
         try:
@@ -132,6 +187,14 @@ class PaperAgent:
             topic = m.group(1).strip()
             file_ref = m.group(2).replace(".md", "").strip()
             return await self._handle_research_and_save(topic, file_ref)
+
+        # Obsidian 파일 전체 읽기 (쓰기 체크보다 먼저)
+        if any(kw in msg for kw in _OBS_SEND_KWS):
+            return await self._handle_obsidian_read(intent.raw_message, getattr(intent, "chat_id", 0))
+
+        # Obsidian 키워드 검색
+        if any(kw in msg for kw in _OBS_SEARCH_KWS):
+            return await self._handle_obsidian_search(intent.raw_message)
 
         # Obsidian 직접 노트 저장
         if any(kw in msg for kw in _OBS_WRITE_KWS):
@@ -367,6 +430,59 @@ characteristics, and practical applications. Use markdown formatting.
         except Exception as e:
             logger.error(f"Obsidian write error: {e}")
             return f"⚠️ Obsidian 저장 실패: {e}"
+
+    async def _handle_obsidian_read(self, raw_message: str, chat_id: int) -> str | None:
+        """파일 전체 내용을 읽어 전송. 길면 send_chunks로 분할."""
+        file_ref = _parse_obs_read_ref(raw_message)
+        if not file_ref:
+            return "⚠️ 읽을 파일명을 찾지 못했습니다. 예: '옵시디언 연구계획 내용 보내줘'"
+        from agents.paper.obsidian_client import ObsidianClient
+        obs = ObsidianClient()
+        target = await asyncio.to_thread(obs.find_note, file_ref)
+        if not target:
+            return f"⚠️ '{file_ref}' 파일을 Obsidian vault에서 찾지 못했습니다."
+        content = await asyncio.to_thread(obs.read_note, target)
+        rel = target.relative_to(obs.vault_path)
+        header = f"📄 *{target.stem}* ({rel})\n{'─'*30}\n"
+        full = header + content
+        if len(full) <= 4000:
+            return full
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
+        await sender.send_chunks(chat_id, full)
+        return None
+
+    async def _handle_obsidian_search(self, raw_message: str) -> str:
+        """파일 내 또는 vault 전체에서 키워드 검색 후 매칭 단락만 반환."""
+        file_ref, query = _parse_obs_search(raw_message)
+        if not query:
+            return "⚠️ 검색할 키워드를 찾지 못했습니다."
+        from agents.paper.obsidian_client import ObsidianClient
+        obs = ObsidianClient()
+
+        if file_ref:
+            target = await asyncio.to_thread(obs.find_note, file_ref)
+            if not target:
+                return f"⚠️ '{file_ref}' 파일을 Obsidian에서 찾지 못했습니다."
+            sections = await asyncio.to_thread(obs.search_in_note, target, query)
+            if not sections:
+                return f"📄 *{target.stem}* 에서 *{query}* 관련 내용을 찾지 못했습니다."
+            rel = target.relative_to(obs.vault_path)
+            lines = [f"🔍 *{target.stem}* — *{query}* 검색결과 ({len(sections)}건)\n{'─'*30}"]
+            for i, sec in enumerate(sections, 1):
+                lines.append(f"\n[{i}]\n{sec}")
+            return "\n".join(lines)
+
+        results = await asyncio.to_thread(obs.search_vault, query)
+        if not results:
+            return f"🔍 Obsidian vault에서 *{query}* 관련 내용을 찾지 못했습니다."
+        total = sum(len(r["sections"]) for r in results)
+        lines = [f"🔍 *{query}* 검색결과 — {len(results)}개 파일, {total}건\n{'─'*30}"]
+        for r in results:
+            lines.append(f"\n📄 *{r['filename']}*")
+            for sec in r["sections"]:
+                lines.append(sec[:300])
+        return "\n".join(lines)
 
     def _parse_collection_name(self, message: str) -> str | None:
         """메시지에서 컬렉션명 추출. 예: 'Domain/robotics NLM 올려줘' → 'Domain/robotics'"""
