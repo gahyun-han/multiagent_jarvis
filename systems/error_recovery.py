@@ -43,6 +43,20 @@ class ErrorRecovery:
         tb = traceback.format_exc()
         logger.error(f"[{kind.value}] Error in {context}: {exc}\n{tb}")
 
+        _solutions = {
+            ErrorKind.CREDIT_EXHAUSTED: "API 크레딧 소진 — @Claude_hangabot으로 직접 요청",
+            ErrorKind.RATE_LIMIT: "API 요청 한도 도달 — 잠시 후 재시도",
+            ErrorKind.NETWORK: "응답 시간 초과 — 요청을 더 작게 나누거나 재시도",
+            ErrorKind.AUTH: "인증 오류 — API 키 확인 필요",
+            ErrorKind.DATA: f"데이터 처리 오류: {str(exc)[:80]}",
+            ErrorKind.UNKNOWN: f"알 수 없는 오류: {str(exc)[:80]}",
+        }
+        try:
+            from systems.error_memory import ErrorMemory
+            ErrorMemory().save(kind.value, context, _solutions.get(kind, str(exc)[:80]))
+        except Exception as mem_exc:
+            logger.warning(f"Failed to save error memory: {mem_exc}")
+
         if chat_id is None:
             return
 

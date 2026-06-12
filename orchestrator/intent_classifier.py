@@ -4,7 +4,7 @@ Also identifies the domain (calendar / paper / finance / dev / triage).
 """
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 from systems.claude_runner import async_ask as claude_ask_async
 
@@ -23,6 +23,7 @@ class Intent:
     raw_message: str
     chat_id: int = 0
     action: str = "execute"  # "execute" | "clarify"
+    error_hints: list = field(default_factory=list)  # 과거 에러 패턴 (선택적 활용)
 
 
 _SYSTEM_PROMPT = """

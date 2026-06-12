@@ -8,6 +8,7 @@ from orchestrator.intent_classifier import IntentClassifier, Intent
 from systems.telegram_sender import TelegramSender
 from systems.usage_manager import UsageManager
 from systems.error_recovery import ErrorRecovery
+from systems.error_memory import ErrorMemory
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class Router:
         self.sender = TelegramSender()
         self.usage = UsageManager()
         self.error_recovery = ErrorRecovery()
+        self.error_memory = ErrorMemory()
 
     async def route(self, message: str, chat_id: int, user_id: int, message_id: int):
         try:
@@ -52,6 +54,7 @@ class Router:
             return
         try:
             intent.chat_id = chat_id  # agent가 백그라운드 완료 알림에 사용
+            intent.error_hints = self.error_memory.load_relevant(intent.domain)
             agent = self._get_agent(intent.domain)
             if agent is None:
                 await self.sender.send(chat_id, f"❓ 처리할 수 없는 요청입니다: {intent.summary}")
