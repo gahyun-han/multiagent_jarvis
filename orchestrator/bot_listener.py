@@ -405,12 +405,12 @@ class BotListener:
                     user_id=user_id,
                     message_id=update.message.message_id,
                 ),
-                timeout=95,
+                timeout=200,
             )
         except asyncio.TimeoutError as e:
             logger.error(f"Handler timeout for message: {text[:80]}")
             await self.error_recovery.handle(
-                RuntimeError("응답 시간 초과 (95s)"),
+                RuntimeError("응답 시간 초과 (200s)"),
                 chat_id=chat_id,
                 context="handler_timeout",
             )
