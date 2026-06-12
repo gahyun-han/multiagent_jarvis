@@ -1,0 +1,34 @@
+{
+  "accounts": [
+    {"name": "현금계좌1", "balance": 8880000, "type": "checking"},
+    {"name": "현금계좌2", "balance": 7141496, "type": "checking"},
+    {"name": "현금계좌3", "balance": 85636105, "type": "checking"}
+  ],
+  "savings": [],
+  "loans": [],
+  "real_estate": [
+    {
+      "name": "아파트",
+      "value": 1313330000,
+      "address": null
+    }
+  ],
+  "stocks": [
+    {
+      "name": "주식 (가현)",
+      "ticker": null,
+      "quantity": null,
+      "avg_price": null,
+      "current_price": null,
+      "total_value": 50000000
+    },
+    {
+      "name": "주식 (현수)",
+      "ticker": null,
+      "quantity": null,
+      "avg_price": null,
+      "current_price": null,
+      "total_value": 50000000
+    }
+  ]
+}

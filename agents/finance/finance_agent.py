@@ -3,12 +3,17 @@ Finance agent — comprehensive asset management: ledger, savings, loans.
 """
 import json
 import logging
+import os
 from pathlib import Path
 from systems.claude_runner import async_ask as claude_ask
+from systems.telegram_sender import TelegramSender
 from agents.finance.ledger_parser import LedgerParser
 from agents.finance.savings_tracker import SavingsTracker
 from agents.finance.asset_manager import AssetManager
 from agents.finance.monthly_summary import get_monthly_summary, get_monthly_graph, get_category_detail
+from agents.finance.report_generator import generate_monthly_report
+from agents.finance.sms_parser import parse_and_save
+from agents.finance.chart_generator import generate_chart, generate_table_image
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +46,38 @@ Output raw JSON only, starting with {
 """.strip()
 
 
+_ASSET_BOT_TOKEN = os.getenv("ASSET_BOT_TOKEN")
+
+
 class FinanceAgent:
     def __init__(self):
         self.parser = LedgerParser()
         self.savings = SavingsTracker()
         self.assets = AssetManager()
+        self._asset_sender = TelegramSender(token=_ASSET_BOT_TOKEN) if _ASSET_BOT_TOKEN else None
 
     async def handle(self, intent) -> str:
         message = intent.raw_message
+
+        # 월별 리포트 / 자산 현황
+        if any(kw in message for kw in ["월별 리포트", "자산 현황", "월간 리포트", "자산리포트", "월리포트"]):
+            import re
+            m = re.search(r'(\d{4}[-/]\d{2})', message)
+            target_month = m.group(1).replace("/", "-") if m else None
+            report = generate_monthly_report(target_month)
+            return await self._send_asset_report(intent.chat_id, report)
+
+        # 차트 / 엑셀 / 흐름 분석
+        _CHART_KW = ["그래프", "차트", "흐름", "트렌드", "trend"]
+        _EXCEL_KW = ["엑셀", "excel", "스프레드시트"]
+        want_chart = any(kw in message for kw in _CHART_KW)
+        want_excel = any(kw in message for kw in _EXCEL_KW)
+        if want_chart or want_excel:
+            return await self._handle_chart_excel(intent.chat_id, message, want_chart, want_excel)
+
+        # 카드 문자 파싱
+        if "카드 문자" in message or "카드문자" in message:
+            return await self._handle_sms(message)
 
         # 월별 그래프 (복수 개월 비교)
         if any(kw in message for kw in ["월별 그래프", "월그래프", "월별그래프", "월별 비교", "지출 비교"]):
@@ -167,6 +196,56 @@ class FinanceAgent:
         ledger = self._load_ledger()
         ledger.append(entry)
         LEDGER_PATH.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    async def _handle_sms(self, message: str) -> str:
+        """카드 문자 내용을 파싱해서 transactions.json에 저장."""
+        # "카드 문자" 또는 "카드문자" 키워드 이후 문자 내용 추출
+        import re
+        sms_text = re.sub(r'^.*?(?:카드\s*문자)\s*', '', message, count=1, flags=re.IGNORECASE).strip()
+        if not sms_text:
+            return "⚠️ 카드 문자 내용을 찾지 못했습니다. 예: `카드 문자 신한카드 12,000원 승인 스타벅스`"
+        parsed, success = parse_and_save(sms_text)
+        if success:
+            source_label = "월별합산" if parsed["source"] == "monthly_total" else "건별 승인"
+            return (
+                f"💳 카드 문자 기록 완료 ({source_label})\n"
+                f"카드: {parsed['card']} | 금액: {parsed['amount']:,}원\n"
+                f"가맹점: {parsed['merchant']}"
+            )
+        return (
+            f"⚠️ 카드 문자 파싱 실패 — 원본 텍스트로 저장했습니다.\n"
+            f"내용: `{sms_text[:80]}`\n"
+            f"금액/카드사를 직접 확인해주세요."
+        )
+
+    async def _handle_chart_excel(self, chat_id: int, message: str, want_chart: bool, want_excel: bool) -> None:
+        import re
+        m = re.search(r'(\d+)\s*개?월', message)
+        months = min(int(m.group(1)), 12) if m else 4
+        sender = self._asset_sender
+        if not sender:
+            return "⚠️ ASSET_BOT_TOKEN이 설정되지 않았습니다."
+        try:
+            if want_chart:
+                chart_bytes = generate_chart(months)
+                await sender.send_photo(chat_id, chart_bytes, caption=f"📊 최근 {months}개월 수입/지출 추이")
+            if want_excel:
+                table_bytes = generate_table_image(months)
+                await sender.send_photo(chat_id, table_bytes, caption=f"📋 최근 {months}개월 가계부 요약")
+            return None
+        except Exception as e:
+            logger.error(f"Chart/Excel generation error: {e}", exc_info=True)
+            return f"⚠️ 차트/엑셀 생성 오류: {e}"
+
+    async def _send_asset_report(self, chat_id: int, text: str) -> None:
+        """asset bot 토큰으로 리포트를 직접 발송. asset bot 미설정 시 일반 반환."""
+        if self._asset_sender and chat_id:
+            try:
+                await self._asset_sender.send(chat_id, text)
+                return None  # router의 main bot 재전송 억제
+            except Exception as e:
+                logger.warning(f"Asset bot send failed, falling back: {e}")
+        return text  # fallback: main bot으로 반환
 
     def _load_ledger(self) -> list:
         if not LEDGER_PATH.exists():

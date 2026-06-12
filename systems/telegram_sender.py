@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramSender:
-    def __init__(self):
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+    def __init__(self, token: str | None = None):
+        self.token = token or os.getenv("TELEGRAM_BOT_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN not set")
 
@@ -45,6 +45,31 @@ class TelegramSender:
             if not await self.send_plain(chat_id, chunk):
                 ok = False
         return ok
+
+    async def send_photo(self, chat_id: int, photo: bytes, caption: str = "") -> bool:
+        try:
+            import io
+            async with Bot(token=self.token) as bot:
+                await bot.send_photo(chat_id=chat_id, photo=io.BytesIO(photo), caption=caption, parse_mode="Markdown")
+            return True
+        except TelegramError as e:
+            logger.error(f"Telegram send_photo error to {chat_id}: {e}")
+            return False
+
+    async def send_document(self, chat_id: int, document: bytes, filename: str, caption: str = "") -> bool:
+        try:
+            import io
+            async with Bot(token=self.token) as bot:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=io.BytesIO(document),
+                    filename=filename,
+                    caption=caption,
+                )
+            return True
+        except TelegramError as e:
+            logger.error(f"Telegram send_document error to {chat_id}: {e}")
+            return False
 
     async def send_with_reply_markup(self, chat_id: int, text: str, reply_markup) -> bool:
         try:
