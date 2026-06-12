@@ -29,6 +29,13 @@ _OBS_WRITE_KWS = ["옵시디언에", "옵시디언 저장", "옵시디언 메모
 # "dt AND rl" 또는 "dt OR agent" 형태 감지
 _AND_OR_RE = re.compile(r'([\w-]+)\s+(AND|OR)\s+([\w-]+(?:\s+(?:AND|OR)\s+[\w-]+)*)', re.IGNORECASE)
 
+# "TOPIC 알아봐주고/조사해주고 + 옵시디언에 FILE.md에 추가" 복합 요청
+_RESEARCH_SAVE_RE = re.compile(
+    r'(.+?)\s+(?:알아봐주고|알아보고|알아봐줘|조사해주고|조사해줘|검색해주고|찾아봐주고)[,\s]+'
+    r'(?:옵시디언|obsidian).+?([^\s,/]+\.md)',
+    re.IGNORECASE | re.DOTALL,
+)
+
 _SYSTEM = """
 You are a research assistant for an AI/ML researcher.
 You have access to their Zotero library and Obsidian notes.
@@ -44,6 +51,14 @@ def _parse_obs_request(message: str) -> tuple[str | None, str]:
     패턴 B: "옵시디언에 FILE_DESC 거기에 CONTENT 추가해줘" → file_ref=FILE_DESC, content=CONTENT
     패턴 C: "옵시디언에 CONTENT 추가해줘"  → file_ref=None, content=CONTENT
     """
+    # 패턴 A': "옵시디언에 파일명.md에 CONTENT" — .md가 문장 중간에 있는 경우 (A보다 먼저 확인)
+    m = re.search(
+        r'(?:옵시디언|obsidian)\s*에\s+([^\s,]+?\.md)\s*에\s+(.+?)(?:\s+(?:추가|저장|적어|넣어)\s*해?\s*줘?\.?)?$',
+        message, re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        return m.group(1).replace(".md", "").strip(), _strip_action_suffix(m.group(2) or "")
+
     # 패턴 A: "파일명.md에 ... 추가/저장/적어줘"
     m = re.match(r'^(.+?\.md)\s*에\s+(.+?)(?:\s+(?:추가|저장|적어|넣어)\s*해?\s*줘?\.?)?$',
                  message, re.IGNORECASE | re.DOTALL)
@@ -110,6 +125,13 @@ class PaperAgent:
             chat_id = getattr(intent, "chat_id", 0)
             asyncio.create_task(self._bg_sync_collections(chat_id))
             return "🔄 컬렉션 동기화를 백그라운드에서 시작했습니다.\n논문 수가 많아 수 분 소요될 수 있습니다. 완료 시 알림 드릴게요."
+
+        # "TOPIC 알아봐주고 + 옵시디언에 FILE.md에 추가" 복합 요청
+        m = _RESEARCH_SAVE_RE.search(intent.raw_message)
+        if m:
+            topic = m.group(1).strip()
+            file_ref = m.group(2).replace(".md", "").strip()
+            return await self._handle_research_and_save(topic, file_ref)
 
         # Obsidian 직접 노트 저장
         if any(kw in msg for kw in _OBS_WRITE_KWS):
@@ -294,6 +316,36 @@ class PaperAgent:
             if i["data"].get("itemType") != "attachment" and i["data"].get("url")
         ]
         return col_path, papers
+
+    async def _handle_research_and_save(self, topic: str, file_ref: str) -> str:
+        """TOPIC을 Claude로 조사한 뒤 Obsidian의 file_ref 파일에 추가."""
+        _RESEARCH_SYSTEM = """
+You are a knowledgeable research assistant. When asked to research a topic,
+provide a well-structured Korean summary including: overview, key concepts,
+characteristics, and practical applications. Use markdown formatting.
+""".strip()
+        try:
+            research = await claude_ask(
+                f"{topic}에 대해 조사해줘. 개념 개요, 핵심 특징, 동작 원리, 활용 사례를 체계적으로 정리해줘.",
+                system=_RESEARCH_SYSTEM, max_tokens=2048, no_tools=True,
+            )
+        except Exception as e:
+            return f"⚠️ 조사 중 오류: {e}"
+
+        from agents.paper.obsidian_client import ObsidianClient
+        obs = ObsidianClient()
+        content_to_save = f"## {topic}\n\n{research}"
+        try:
+            target = await asyncio.to_thread(obs.find_note, file_ref)
+            if target:
+                path = await asyncio.to_thread(obs.append_to_note, target, content_to_save)
+            else:
+                path = await asyncio.to_thread(obs.add_note, content_to_save, topic)
+            rel = path.relative_to(obs.vault_path)
+            return f"🔍 **{topic}** 조사 완료\n📝 Obsidian 저장: {rel}\n\n{research}"
+        except Exception as e:
+            logger.error(f"Obsidian save error: {e}")
+            return f"🔍 **{topic}** 조사 완료 (Obsidian 저장 실패: {e})\n\n{research}"
 
     async def _handle_obsidian_write(self, raw_message: str) -> str:
         file_ref, content = _parse_obs_request(raw_message)
