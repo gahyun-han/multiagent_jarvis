@@ -390,3 +390,50 @@ async def test_finance_agent_card_sms_no_content():
         result = await agent.handle(intent)
     mock_parse.assert_not_called()
     assert "내용을 찾지 못했습니다" in result or "예:" in result
+
+
+# ── chart_generator ──────────────────────────────────────────────────────────
+
+def test_generate_chart_returns_bytes(tmp_path):
+    from agents.finance import chart_generator as cg
+    cg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
+    cg._TRANSACTIONS_PATH = tmp_path / "transactions.json"
+    cg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
+
+    snaps = [
+        {"month": "2026-05", "net_assets": 100, "stock_value": 0, "real_estate_value": 0, "card_spend": 2000000},
+        {"month": "2026-06", "net_assets": 100, "stock_value": 0, "real_estate_value": 0, "card_spend": 1500000},
+    ]
+    (tmp_path / "monthly_snapshot.json").write_text(json.dumps(snaps))
+    (tmp_path / "transactions.json").write_text("[]")
+    (tmp_path / "finance_assets.json").write_text(json.dumps(
+        {"fixed": {"salary": 9800000, "savings": 200000, "fixed_expenses": []}}
+    ))
+
+    result = cg.generate_chart(2)
+    assert isinstance(result, bytes)
+    assert len(result) > 1000
+    assert result[:4] == b'\x89PNG'  # PNG magic bytes
+
+
+def test_generate_excel_returns_xlsx(tmp_path):
+    from agents.finance import chart_generator as cg
+    cg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
+    cg._TRANSACTIONS_PATH = tmp_path / "transactions.json"
+    cg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
+
+    snaps = [{"month": "2026-06", "net_assets": 100, "stock_value": 0, "real_estate_value": 0, "card_spend": 500000}]
+    (tmp_path / "monthly_snapshot.json").write_text(json.dumps(snaps))
+    txs = [
+        {"date": "2026-06-01", "amount": 300000, "card": "삼성카드", "source": "manual"},
+        {"date": "2026-06-01", "amount": 200000, "card": "토스카드", "source": "manual"},
+    ]
+    (tmp_path / "transactions.json").write_text(json.dumps(txs))
+    (tmp_path / "finance_assets.json").write_text(json.dumps(
+        {"fixed": {"salary": 9800000, "savings": 200000, "fixed_expenses": []}}
+    ))
+
+    result = cg.generate_excel(1)
+    assert isinstance(result, bytes)
+    # xlsx magic bytes (PK zip)
+    assert result[:2] == b'PK'
