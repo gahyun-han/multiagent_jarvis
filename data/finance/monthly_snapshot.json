@@ -1,0 +1,30 @@
+[
+  {
+    "month": "2026-03",
+    "net_assets": 1514987601,
+    "stock_value": 100000000,
+    "real_estate_value": 1313330000,
+    "card_spend": 3811241
+  },
+  {
+    "month": "2026-04",
+    "net_assets": 1514987601,
+    "stock_value": 100000000,
+    "real_estate_value": 1313330000,
+    "card_spend": 3726640
+  },
+  {
+    "month": "2026-05",
+    "net_assets": 1514987601,
+    "stock_value": 100000000,
+    "real_estate_value": 1313330000,
+    "card_spend": 2876679
+  },
+  {
+    "month": "2026-06",
+    "net_assets": 1514987601,
+    "stock_value": 100000000,
+    "real_estate_value": 1313330000,
+    "card_spend": 429840
+  }
+]

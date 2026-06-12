@@ -12,8 +12,10 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from collections import defaultdict
+
 from agents.finance.asset_manager import AssetManager
-from agents.finance.sms_parser import load_transactions_for_month
+from agents.finance.sms_parser import load_income_for_month, load_transactions_for_month
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ def generate_monthly_report(month: str = None) -> str:
     assets = AssetManager().load()
     finance_cfg = _load_finance_assets()
     transactions = load_transactions_for_month(target)
+    income_transactions = load_income_for_month(target)
     snapshots = _load_snapshots()
     prev_snap = _find_snapshot(snapshots, _prev_month(target))
 
@@ -54,14 +57,23 @@ def generate_monthly_report(month: str = None) -> str:
     gross_assets = stock_value + re_value + account_value + savings_balance
     net_assets = gross_assets - loan_balance
 
-    # ── 지출 계산 ──────────────────────────────────────────────────────────────
+    # ── 수입/지출 계산 ─────────────────────────────────────────────────────────
     card_spend = sum(t.get("amount", 0) for t in transactions)
+    extra_income = sum(t.get("amount", 0) for t in income_transactions)
     fixed = finance_cfg.get("fixed", {})
     salary = fixed.get("salary", 0)
     savings_monthly = fixed.get("savings", 0)
     fixed_expenses = fixed.get("fixed_expenses", [])
     fixed_total = sum(e.get("amount", 0) for e in fixed_expenses) + savings_monthly
-    estimated_remainder = salary - fixed_total - card_spend
+    total_income = salary + extra_income
+    total_expense = fixed_total + card_spend
+    estimated_remainder = total_income - total_expense
+
+    # ── 카드사별 지출 ───────────────────────────────────────────────────────────
+    card_breakdown: dict[str, int] = defaultdict(int)
+    for t in transactions:
+        card = t.get("card") or "기타"
+        card_breakdown[card] += t.get("amount", 0)
 
     # ── 스냅샷 저장 ────────────────────────────────────────────────────────────
     snapshot = {
@@ -92,19 +104,30 @@ def generate_monthly_report(month: str = None) -> str:
     lines.append(f"  💰 *순자산: {net_assets:,}원*")
     lines.append("")
 
-    # ② 이번 달 지출 요약
-    lines.append("*② 이번 달 지출 요약*")
+    # ② 이번 달 수입/지출 요약
+    lines.append("*② 이번 달 수입/지출 요약*")
     if salary:
-        lines.append(f"  💵 월급:      {salary:,}원")
+        lines.append(f"  💵 월급: {salary:,}원")
+    for inc in income_transactions:
+        lines.append(f"  💵 {inc.get('merchant', '기타수입')}: +{inc.get('amount', 0):,}원")
+    if extra_income:
+        lines.append(f"  {'─'*16}")
+        lines.append(f"  💵 *총 수입: {total_income:,}원*")
+    lines.append("")
     if fixed_expenses:
         lines.append(f"  🔒 고정지출: -{fixed_total:,}원")
         for fe in fixed_expenses:
             lines.append(f"     • {fe['name']}: {fe['amount']:,}원")
         if savings_monthly:
             lines.append(f"     • 적금납입: {savings_monthly:,}원")
-    card_note = f" _(카드 문자 {len(transactions)}건, 누락 있을 수 있음)_" if transactions else " _(기록 없음)_"
+    card_note = f" _(카드 {len(transactions)}건, 누락 있을 수 있음)_" if transactions else " _(기록 없음)_"
     lines.append(f"  💳 카드지출: -{card_spend:,}원{card_note}")
-    if salary:
+    if card_breakdown:
+        for card, amount in sorted(card_breakdown.items(), key=lambda x: -x[1]):
+            lines.append(f"     • {card}: {amount:,}원")
+    if total_income or total_expense:
+        lines.append(f"  {'─'*16}")
+        lines.append(f"  📊 총 지출: -{total_expense:,}원")
         sign = "+" if estimated_remainder >= 0 else ""
         icon = "✅" if estimated_remainder >= 0 else "🔴"
         lines.append(f"  {icon} 추정 잔여: {sign}{estimated_remainder:,}원")

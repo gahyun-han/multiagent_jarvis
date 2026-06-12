@@ -108,11 +108,20 @@ def parse_and_save(sms_text: str) -> tuple[dict, bool]:
 
 
 def load_transactions_for_month(month: str) -> list[dict]:
-    """YYYY-MM 형식의 월에 해당하는 거래 목록 반환 (monthly_total 제외)."""
+    """YYYY-MM 형식의 월에 해당하는 지출 거래 목록 반환 (monthly_total/unknown/income 제외)."""
     return [
         t for t in _load_transactions()
         if t.get("date", "")[:7] == month
-        and t.get("source") not in ("monthly_total", "unknown")
+        and t.get("source") not in ("monthly_total", "unknown", "income")
+    ]
+
+
+def load_income_for_month(month: str) -> list[dict]:
+    """YYYY-MM 형식의 월에 해당하는 수입 거래 목록 반환."""
+    return [
+        t for t in _load_transactions()
+        if t.get("date", "")[:7] == month
+        and t.get("source") == "income"
     ]
 
 

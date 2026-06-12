@@ -1,0 +1,135 @@
+[
+  {
+    "date": "2026-03-01",
+    "amount": 103258,
+    "merchant": "월합산",
+    "card": "토스카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-03-01",
+    "amount": 1157390,
+    "merchant": "월합산",
+    "card": "하나카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-03-01",
+    "amount": 1580283,
+    "merchant": "월합산",
+    "card": "삼성카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-03-01",
+    "amount": 620310,
+    "merchant": "월합산",
+    "card": "우리카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-03-01",
+    "amount": 350000,
+    "merchant": "월합산",
+    "card": "남편카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 600313,
+    "merchant": "월합산",
+    "card": "토스카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 357618,
+    "merchant": "월합산",
+    "card": "하나카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 1814920,
+    "merchant": "월합산",
+    "card": "삼성카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 603789,
+    "merchant": "월합산",
+    "card": "우리카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 350000,
+    "merchant": "월합산",
+    "card": "남편카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-05-01",
+    "amount": 248650,
+    "merchant": "월합산",
+    "card": "토스카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-05-01",
+    "amount": 69530,
+    "merchant": "월합산",
+    "card": "하나카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-05-01",
+    "amount": 1910560,
+    "merchant": "월합산",
+    "card": "삼성카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-05-01",
+    "amount": 297939,
+    "merchant": "월합산",
+    "card": "우리카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-05-01",
+    "amount": 350000,
+    "merchant": "월합산",
+    "card": "남편카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-06-01",
+    "amount": 79840,
+    "merchant": "월합산",
+    "card": "토스카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-06-01",
+    "amount": 350000,
+    "merchant": "월합산",
+    "card": "남편카드",
+    "source": "manual"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 6376700,
+    "merchant": "업무성과금(가현)",
+    "card": "",
+    "source": "income"
+  },
+  {
+    "date": "2026-04-01",
+    "amount": 1432000,
+    "merchant": "특별보상(가현)",
+    "card": "",
+    "source": "income"
+  }
+]

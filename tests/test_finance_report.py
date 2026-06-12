@@ -101,12 +101,31 @@ def test_load_transactions_for_month(tmp_path):
         {"amount": 1000, "source": "sms", "date": "2026-06-05", "merchant": "A", "card": "신한"},
         {"amount": 2000, "source": "sms", "date": "2026-07-01", "merchant": "B", "card": "국민"},
         {"amount": 500, "source": "monthly_total", "date": "2026-06-30", "merchant": "월별합산", "card": "신한"},
+        {"amount": 3000, "source": "income", "date": "2026-06-01", "merchant": "성과금", "card": ""},
     ]
     (tmp_path / "transactions.json").write_text(json.dumps(data))
     try:
         result = sms_mod.load_transactions_for_month("2026-06")
-        assert len(result) == 1  # monthly_total 제외, 7월 제외
+        assert len(result) == 1  # monthly_total/income 제외, 7월 제외
         assert result[0]["amount"] == 1000
+    finally:
+        sms_mod._TRANSACTIONS_PATH = original_path
+
+
+def test_load_income_for_month(tmp_path):
+    from agents.finance import sms_parser as sms_mod
+    original_path = sms_mod._TRANSACTIONS_PATH
+    sms_mod._TRANSACTIONS_PATH = tmp_path / "transactions.json"
+    data = [
+        {"amount": 1000, "source": "sms", "date": "2026-06-05", "merchant": "A", "card": "신한"},
+        {"amount": 5000, "source": "income", "date": "2026-06-01", "merchant": "성과금", "card": ""},
+        {"amount": 3000, "source": "income", "date": "2026-07-01", "merchant": "성과금", "card": ""},
+    ]
+    (tmp_path / "transactions.json").write_text(json.dumps(data))
+    try:
+        result = sms_mod.load_income_for_month("2026-06")
+        assert len(result) == 1
+        assert result[0]["amount"] == 5000
     finally:
         sms_mod._TRANSACTIONS_PATH = original_path
 
@@ -146,133 +165,150 @@ def test_parse_and_save_failure(tmp_path):
 
 # ── report_generator ─────────────────────────────────────────────────────────
 
-def test_generate_monthly_report_contains_sections(tmp_path):
-    from agents.finance import report_generator as rg
-    orig_path = rg._SNAPSHOT_PATH
-    orig_dir = rg._FINANCE_DIR
-    orig_fa = rg._FINANCE_ASSETS_PATH
+_EMPTY_ASSETS = {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
+
+
+def _patch_rg(tmp_path, rg):
     rg._FINANCE_DIR = tmp_path
     rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
     rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {
-                "accounts": [{"name": "카카오뱅크", "balance": 1000000}],
-                "savings": [],
-                "loans": [],
-                "real_estate": [{"name": "아파트", "value": 500000000}],
-                "stocks": [{"name": "삼성전자", "total_value": 8000000}],
-            }
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[
-                {"amount": 50000, "source": "sms"},
-                {"amount": 30000, "source": "sms"},
-            ]):
+
+
+def test_generate_monthly_report_contains_sections(tmp_path):
+    from agents.finance import report_generator as rg
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = {
+            "accounts": [{"name": "카카오뱅크", "balance": 1000000}],
+            "savings": [],
+            "loans": [],
+            "real_estate": [{"name": "아파트", "value": 500000000}],
+            "stocks": [{"name": "삼성전자", "total_value": 8000000}],
+        }
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[
+            {"amount": 50000, "source": "sms", "card": "신한"},
+            {"amount": 30000, "source": "sms", "card": "국민"},
+        ]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
                 result = rg.generate_monthly_report("2026-06")
 
-        assert "순자산 현황" in result
-        assert "이번 달 지출" in result
-        assert "전월 대비" in result
-        assert "2026-06" in result
-    finally:
-        rg._FINANCE_DIR = orig_dir
-        rg._SNAPSHOT_PATH = orig_path
-        rg._FINANCE_ASSETS_PATH = orig_fa
+    assert "순자산 현황" in result
+    assert "수입/지출 요약" in result
+    assert "전월 대비" in result
+    assert "2026-06" in result
 
 
 def test_generate_monthly_report_saves_snapshot(tmp_path):
     from agents.finance import report_generator as rg
-    rg._FINANCE_DIR = tmp_path
-    rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
-    rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
                 rg.generate_monthly_report("2026-06")
 
-        data = json.loads((tmp_path / "monthly_snapshot.json").read_text())
-        assert len(data) == 1
-        assert data[0]["month"] == "2026-06"
-    finally:
-        rg._FINANCE_DIR = rg._FINANCE_DIR  # restore handled implicitly by import
+    data = json.loads((tmp_path / "monthly_snapshot.json").read_text())
+    assert len(data) == 1
+    assert data[0]["month"] == "2026-06"
 
 
 def test_generate_report_no_duplicate_snapshot(tmp_path):
     """같은 월 리포트 2번 생성해도 스냅샷은 1개 (덮어쓰기)."""
     from agents.finance import report_generator as rg
-    rg._FINANCE_DIR = tmp_path
-    rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
-    rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
                 rg.generate_monthly_report("2026-06")
                 rg.generate_monthly_report("2026-06")
 
-        data = json.loads((tmp_path / "monthly_snapshot.json").read_text())
-        assert len(data) == 1  # 중복 없음
-    finally:
-        pass
+    data = json.loads((tmp_path / "monthly_snapshot.json").read_text())
+    assert len(data) == 1
 
 
 def test_generate_report_shows_prev_month_trend(tmp_path):
     """전월 스냅샷이 있으면 트렌드 섹션에 전월 데이터가 표시된다."""
     from agents.finance import report_generator as rg
-    rg._FINANCE_DIR = tmp_path
-    rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
-    rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
+    _patch_rg(tmp_path, rg)
 
     prev = [{"month": "2026-05", "net_assets": 100000000, "stock_value": 8000000, "real_estate_value": 0, "card_spend": 0}]
     (tmp_path / "monthly_snapshot.json").write_text(json.dumps(prev))
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {
-                "accounts": [], "savings": [], "loans": [],
-                "real_estate": [{"name": "아파트", "value": 110000000}],
-                "stocks": [],
-            }
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = {
+            "accounts": [], "savings": [], "loans": [],
+            "real_estate": [{"name": "아파트", "value": 110000000}],
+            "stocks": [],
+        }
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
                 result = rg.generate_monthly_report("2026-06")
 
-        assert "2026-05" in result
-        assert "100,000,000" in result  # 전월 순자산
-    finally:
-        pass
+    assert "2026-05" in result
+    assert "100,000,000" in result
 
 
 def test_generate_report_no_prev_snapshot_message(tmp_path):
     """전월 데이터 없으면 안내 문구 출력."""
     from agents.finance import report_generator as rg
-    rg._FINANCE_DIR = tmp_path
-    rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
-    rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
                 result = rg.generate_monthly_report("2026-06")
-        assert "전월 데이터 없음" in result
-    finally:
-        pass
+    assert "전월 데이터 없음" in result
 
 
 def test_report_includes_card_spend_note(tmp_path):
     """카드 지출 항목에 '누락 있을 수 있음' 문구가 포함된다."""
     from agents.finance import report_generator as rg
-    rg._FINANCE_DIR = tmp_path
-    rg._SNAPSHOT_PATH = tmp_path / "monthly_snapshot.json"
-    rg._FINANCE_ASSETS_PATH = tmp_path / "finance_assets.json"
-    try:
-        with patch("agents.finance.report_generator.AssetManager") as MockAM:
-            MockAM.return_value.load.return_value = {"accounts": [], "savings": [], "loans": [], "real_estate": [], "stocks": []}
-            with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[
-                {"amount": 10000, "source": "sms"},
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[
+            {"amount": 10000, "source": "sms", "card": "신한"},
+        ]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
+                result = rg.generate_monthly_report("2026-06")
+    assert "누락 있을 수 있음" in result
+
+
+def test_report_shows_card_breakdown(tmp_path):
+    """카드사별 지출 내역이 리포트에 표시된다."""
+    from agents.finance import report_generator as rg
+    _patch_rg(tmp_path, rg)
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[
+            {"amount": 300000, "source": "manual", "card": "삼성카드"},
+            {"amount": 100000, "source": "manual", "card": "토스카드"},
+        ]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[]):
+                result = rg.generate_monthly_report("2026-06")
+    assert "삼성카드" in result
+    assert "300,000" in result
+    assert "토스카드" in result
+
+
+def test_report_shows_extra_income(tmp_path):
+    """성과금 등 추가 수입이 리포트에 표시되고 총 수입이 계산된다."""
+    from agents.finance import report_generator as rg
+    _patch_rg(tmp_path, rg)
+    (tmp_path / "finance_assets.json").write_text(json.dumps(
+        {"fixed": {"salary": 9800000, "savings": 0, "fixed_expenses": []}}
+    ))
+    with patch("agents.finance.report_generator.AssetManager") as MockAM:
+        MockAM.return_value.load.return_value = _EMPTY_ASSETS
+        with patch("agents.finance.report_generator.load_transactions_for_month", return_value=[]):
+            with patch("agents.finance.report_generator.load_income_for_month", return_value=[
+                {"amount": 6376700, "merchant": "업무성과금(가현)", "source": "income"},
             ]):
                 result = rg.generate_monthly_report("2026-06")
-        assert "누락 있을 수 있음" in result
-    finally:
-        pass
+    assert "업무성과금(가현)" in result
+    assert "총 수입" in result
+    assert "16,176,700" in result  # 9,800,000 + 6,376,700
 
 
 def test_prev_month_helper():
