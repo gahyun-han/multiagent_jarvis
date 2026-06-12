@@ -181,12 +181,14 @@ class PaperAgent:
             asyncio.create_task(self._bg_sync_collections(chat_id))
             return "🔄 컬렉션 동기화를 백그라운드에서 시작했습니다.\n논문 수가 많아 수 분 소요될 수 있습니다. 완료 시 알림 드릴게요."
 
-        # "TOPIC 알아봐주고 + 옵시디언에 FILE.md에 추가" 복합 요청
+        # "TOPIC 알아봐주고 + 옵시디언에 FILE.md에 추가" 복합 요청 — 백그라운드 실행
         m = _RESEARCH_SAVE_RE.search(intent.raw_message)
         if m:
             topic = m.group(1).strip()
             file_ref = m.group(2).replace(".md", "").strip()
-            return await self._handle_research_and_save(topic, file_ref)
+            chat_id = getattr(intent, "chat_id", 0)
+            asyncio.create_task(self._bg_research_and_save(topic, file_ref, chat_id))
+            return f"🔍 *{topic}* 조사를 백그라운드에서 시작합니다.\nClaude 응답 후 Obsidian 저장까지 완료하면 알림 드릴게요."
 
         # Obsidian 파일 전체 읽기 (쓰기 체크보다 먼저)
         if any(kw in msg for kw in _OBS_SEND_KWS):
@@ -379,6 +381,19 @@ class PaperAgent:
             if i["data"].get("itemType") != "attachment" and i["data"].get("url")
         ]
         return col_path, papers
+
+    async def _bg_research_and_save(self, topic: str, file_ref: str, chat_id: int):
+        """research+save를 백그라운드에서 실행하고 완료 시 Telegram 알림."""
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
+        try:
+            result = await self._handle_research_and_save(topic, file_ref)
+            if chat_id:
+                await sender.send_chunks(chat_id, result)
+        except Exception as e:
+            logger.error(f"_bg_research_and_save error: {e}", exc_info=True)
+            if chat_id:
+                await sender.send(chat_id, f"⚠️ 조사/저장 중 오류: {e}")
 
     async def _handle_research_and_save(self, topic: str, file_ref: str) -> str:
         """TOPIC을 Claude로 조사한 뒤 Obsidian의 file_ref 파일에 추가."""

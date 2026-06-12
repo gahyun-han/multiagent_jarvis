@@ -77,13 +77,29 @@ def _make_intent(raw: str):
 
 
 @pytest.mark.asyncio
-async def test_handle_finds_existing_file_and_appends():
-    """기존 연구계획.md 파일을 찾아 내용 추가."""
+async def test_handle_research_save_returns_background_message():
+    """handle()은 백그라운드 시작 메시지를 즉시 반환한다."""
     from agents.paper.paper_agent import PaperAgent
 
     intent = _make_intent(
         "자기학습 에이전트(Dreaming)에 대해서 알아봐주고, 옵시디언에 연구계획.md에 내용 추가해줘."
     )
+    with patch("agents.paper.paper_agent.ZoteroClient"):
+        agent = PaperAgent()
+        with patch("agents.paper.paper_agent.asyncio") as mock_asyncio:
+            mock_asyncio.to_thread = asyncio.to_thread
+            mock_asyncio.create_task = MagicMock()
+            result = await agent.handle(intent)
+
+    assert "백그라운드" in result
+    mock_asyncio.create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_finds_existing_file_and_appends():
+    """_handle_research_and_save: 기존 파일을 찾아 내용 추가."""
+    from agents.paper.paper_agent import PaperAgent
+
     fake_path = Path("/vault/연구계획.md")
 
     with patch("agents.paper.paper_agent.ZoteroClient"):
@@ -94,9 +110,8 @@ async def test_handle_finds_existing_file_and_appends():
                 obs_inst.vault_path = Path("/vault")
                 obs_inst.find_note = MagicMock(return_value=fake_path)
                 obs_inst.append_to_note = MagicMock(return_value=fake_path)
-                result = await agent.handle(intent)
+                result = await agent._handle_research_and_save("자기학습 에이전트(Dreaming)", "연구계획")
 
-    assert "자기학습 에이전트" in result
     assert "조사 완료" in result
     assert "연구계획" in result
     obs_inst.append_to_note.assert_called_once()
@@ -104,12 +119,9 @@ async def test_handle_finds_existing_file_and_appends():
 
 @pytest.mark.asyncio
 async def test_handle_creates_new_file_when_not_found():
-    """연구계획.md를 못 찾으면 새 파일 생성."""
+    """_handle_research_and_save: 파일 없으면 새 파일 생성."""
     from agents.paper.paper_agent import PaperAgent
 
-    intent = _make_intent(
-        "RAG에 대해서 알아봐주고, 옵시디언에 연구노트.md에 내용 추가해줘."
-    )
     fake_path = Path("/vault/Inbox/RAG.md")
 
     with patch("agents.paper.paper_agent.ZoteroClient"):
@@ -120,7 +132,7 @@ async def test_handle_creates_new_file_when_not_found():
                 obs_inst.vault_path = Path("/vault")
                 obs_inst.find_note = MagicMock(return_value=None)
                 obs_inst.add_note = MagicMock(return_value=fake_path)
-                result = await agent.handle(intent)
+                result = await agent._handle_research_and_save("RAG", "연구노트")
 
     assert "조사 완료" in result
     obs_inst.add_note.assert_called_once()
