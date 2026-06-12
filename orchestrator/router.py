@@ -60,7 +60,8 @@ class Router:
                 await self.sender.send(chat_id, f"❓ 처리할 수 없는 요청입니다: {intent.summary}")
                 return
             result = await agent.handle(intent)
-            await self.sender.send(chat_id, result)
+            if result:
+                await self.sender.send(chat_id, result)
             self.usage.record_usage(intent.domain, tokens_used=500)
         except Exception as e:
             await self.error_recovery.handle(e, chat_id=chat_id, context=f"immediate:{intent.domain}")

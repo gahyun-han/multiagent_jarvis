@@ -3,8 +3,10 @@ Finance agent — comprehensive asset management: ledger, savings, loans.
 """
 import json
 import logging
+import os
 from pathlib import Path
 from systems.claude_runner import async_ask as claude_ask
+from systems.telegram_sender import TelegramSender
 from agents.finance.ledger_parser import LedgerParser
 from agents.finance.savings_tracker import SavingsTracker
 from agents.finance.asset_manager import AssetManager
@@ -43,11 +45,15 @@ Output raw JSON only, starting with {
 """.strip()
 
 
+_ASSET_BOT_TOKEN = os.getenv("ASSET_BOT_TOKEN")
+
+
 class FinanceAgent:
     def __init__(self):
         self.parser = LedgerParser()
         self.savings = SavingsTracker()
         self.assets = AssetManager()
+        self._asset_sender = TelegramSender(token=_ASSET_BOT_TOKEN) if _ASSET_BOT_TOKEN else None
 
     async def handle(self, intent) -> str:
         message = intent.raw_message
@@ -57,7 +63,8 @@ class FinanceAgent:
             import re
             m = re.search(r'(\d{4}[-/]\d{2})', message)
             target_month = m.group(1).replace("/", "-") if m else None
-            return generate_monthly_report(target_month)
+            report = generate_monthly_report(target_month)
+            return await self._send_asset_report(intent.chat_id, report)
 
         # 카드 문자 파싱
         if "카드 문자" in message or "카드문자" in message:
@@ -201,6 +208,16 @@ class FinanceAgent:
             f"내용: `{sms_text[:80]}`\n"
             f"금액/카드사를 직접 확인해주세요."
         )
+
+    async def _send_asset_report(self, chat_id: int, text: str) -> None:
+        """asset bot 토큰으로 리포트를 직접 발송. asset bot 미설정 시 일반 반환."""
+        if self._asset_sender and chat_id:
+            try:
+                await self._asset_sender.send(chat_id, text)
+                return None  # router의 main bot 재전송 억제
+            except Exception as e:
+                logger.warning(f"Asset bot send failed, falling back: {e}")
+        return text  # fallback: main bot으로 반환
 
     def _load_ledger(self) -> list:
         if not LEDGER_PATH.exists():

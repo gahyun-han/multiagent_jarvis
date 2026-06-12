@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramSender:
-    def __init__(self):
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+    def __init__(self, token: str | None = None):
+        self.token = token or os.getenv("TELEGRAM_BOT_TOKEN")
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN not set")
 
