@@ -37,7 +37,9 @@ class Router:
             intent = await self.classifier.classify(message)
             logger.info(f"Intent: domain={intent.domain} urgency={intent.urgency} conf={intent.confidence:.2f}")
 
-            if intent.urgency == "immediate":
+            if intent.action == "clarify":
+                await self._ask_urgency(intent, chat_id)
+            elif intent.urgency == "immediate":
                 await self._dispatch_immediate(intent, chat_id)
             else:
                 await self._dispatch_backlog(intent, chat_id)

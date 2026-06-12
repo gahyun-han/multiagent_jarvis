@@ -22,13 +22,14 @@ class Intent:
     summary: str
     raw_message: str
     chat_id: int = 0
+    action: str = "execute"  # "execute" | "clarify"
 
 
 _SYSTEM_PROMPT = """
 You are an intent classifier for a personal AI assistant (Jarvis).
 Given a Korean or English message from the user, output JSON with:
 {
-  "domain": one of ["calendar", "paper", "finance", "dev", "backlog", "triage", "unknown"],
+  "domain": one of ["calendar", "paper", "finance", "dev", "usage", "youtube", "backlog", "triage", "unknown"],
   "urgency": "immediate" if the request needs to be handled right now, else "backlog",
   "confidence": float 0-1,
   "summary": one-line Korean summary of what the user wants
@@ -39,6 +40,8 @@ Domain rules:
 - paper: 논문, 연구, paper, zotero, obsidian, 문헌
 - finance: 돈, 지출, 수입, 가계부, 저축, 대출, 적금, 자산, 통장, 계좌, 잔액, 월급, 이체, 투자, 주식, 펀드, budget, expense, asset, account, balance
 - dev: 코드, 개발, 버그, 테스트, PR, code, debug, test
+- usage: 토큰 사용량, API 예산, 잔여 크레딧 조회 (사용량, 사용률, 토큰, 리셋, 예산)
+- youtube: 유튜브 링크 또는 영상 관련 요청 (youtube.com, youtu.be, 유튜브)
 - backlog: 백로그 조회/삭제/수행 요청 (backlog list, delete, clear)
 - triage: ONLY when the user explicitly says 나중에/이따/다음에/언젠가 or the message is a vague memo with no actionable domain
 - unknown: cannot determine
@@ -51,6 +54,13 @@ Urgency rules — read carefully:
 
 When in doubt, choose immediate.
 
+Examples:
+- "저번거 고쳐줘" → {"domain": "dev", "urgency": "immediate", "confidence": 0.85, "summary": "이전 작업 수정 요청"}
+- "나중에 논문 읽어야지" → {"domain": "triage", "urgency": "backlog", "confidence": 0.95, "summary": "논문 읽기 나중에 처리"}
+- "토큰 얼마나 썼어?" → {"domain": "usage", "urgency": "immediate", "confidence": 0.98, "summary": "토큰 사용량 조회"}
+- "/list" → {"domain": "backlog", "urgency": "immediate", "confidence": 1.0, "summary": "백로그 목록 조회"}
+- "이거 백로그에서 지워줘" → {"domain": "backlog", "urgency": "immediate", "confidence": 0.97, "summary": "백로그 항목 삭제"}
+
 Output ONLY valid JSON, no markdown fences.
 """.strip()
 
@@ -58,6 +68,10 @@ Output ONLY valid JSON, no markdown fences.
 # 키워드 기반 사전 판별 규칙 — LLM 호출 전에 확정적으로 분류
 _KEYWORD_RULES: list[tuple[list[str], str, str]] = [
     # (키워드 목록,  domain,     urgency)
+    # 슬래시 커맨드 — 최우선으로 확정 분류
+    (["/list", "/백로그", "/backlog"],          "backlog",  "immediate"),
+    (["/사용량", "/usage", "/토큰"],            "usage",    "immediate"),
+    (["/일정", "/calendar"],                    "calendar", "immediate"),
     (["자산 목록", "자산목록", "자산 추가", "통장 추가", "계좌 추가",
       "적금 추가", "대출 추가", "부동산 추가",
       "부동산 수정", "부동산 업데이트", "집값 수정", "아파트 수정",
@@ -132,12 +146,15 @@ class IntentClassifier:
                 urgency = "immediate"
             elif urgency == "backlog" and not has_backlog:
                 urgency = "immediate"
+            confidence = float(data.get("confidence", 0.5))
+            action = "clarify" if confidence < 0.7 else "execute"
             return Intent(
                 domain=data.get("domain", "unknown"),
                 urgency=urgency,
-                confidence=float(data.get("confidence", 0.5)),
+                confidence=confidence,
                 summary=data.get("summary", message[:80]),
                 raw_message=message,
+                action=action,
             )
         except Exception as e:
             logger.error(f"Intent classification failed: {e}")
