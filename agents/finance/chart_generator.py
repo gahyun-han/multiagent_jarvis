@@ -204,9 +204,9 @@ def generate_table_image(months: int = 4) -> bytes:
 
     row_h = 0.48
     fig_h = row_h * (n_rows + 1) + 0.15
-    fig, ax = plt.subplots(figsize=(7.5, fig_h))
+    fig, ax = plt.subplots(figsize=(6.0, fig_h))
     fig.patch.set_facecolor("#1e1e2e")
-    ax.set_facecolor("#1e1e2e")
+    ax.patch.set_visible(False)  # axes 배경 제거 → tight crop이 테이블 셀만 포함
     ax.axis("off")
 
     tbl = ax.table(
@@ -242,10 +242,9 @@ def generate_table_image(months: int = 4) -> bytes:
             else:
                 cell.set_text_props(color="#d0d0e8")
 
-    plt.tight_layout(pad=0.0)
     buf = io.BytesIO()
     plt.savefig(buf, format="png", dpi=160, bbox_inches="tight",
-                pad_inches=0.06, facecolor=fig.get_facecolor())
+                pad_inches=0.02, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf.read()
