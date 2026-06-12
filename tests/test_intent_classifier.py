@@ -245,3 +245,41 @@ def test_intent_default_action_is_execute():
         confidence=1.0, summary="test", raw_message="test",
     )
     assert intent.action == "execute"
+
+
+# ── Obsidian 라우팅 버그 수정 검증 ────────────────────────────────────────────
+# "옵시디언 연구계획.md 파일에 내용 추가해줘" 패턴에서 "옵시디언에" 파티클이 없어도
+# paper 도메인으로 사전 분류되어야 한다 (LLM이 "에이전트" 키워드 때문에 dev로
+# 분류하는 오류 방지).
+
+@pytest.mark.asyncio
+async def test_obsidian_without_particle_routes_to_paper():
+    """'옵시디언 연구계획.md 파일에 내용 추가해줘' → paper 도메인 (LLM 불필요)."""
+    classifier = IntentClassifier()
+    with patch("orchestrator.intent_classifier.claude_ask_async") as mock_llm:
+        result = await classifier.classify(
+            "자기학습 에이전트(Dreaming)에 대해서 알아봐주고, 옵시디언 연구계획.md 파일에 내용 추가해줘."
+        )
+    mock_llm.assert_not_called()
+    assert result.domain == "paper"
+    assert result.urgency == "immediate"
+
+
+@pytest.mark.asyncio
+async def test_obsidian_md_file_routes_to_paper():
+    """'옵시디언 메모.md 파일에 추가해줘' → paper (particle 없이도 분류)."""
+    classifier = IntentClassifier()
+    with patch("orchestrator.intent_classifier.claude_ask_async") as mock_llm:
+        result = await classifier.classify("옵시디언 메모.md 파일에 추가해줘")
+    mock_llm.assert_not_called()
+    assert result.domain == "paper"
+
+
+@pytest.mark.asyncio
+async def test_obsidian_with_particle_still_routes_to_paper():
+    """기존 '옵시디언에 저장' 패턴도 계속 paper 도메인으로 분류된다."""
+    classifier = IntentClassifier()
+    with patch("orchestrator.intent_classifier.claude_ask_async") as mock_llm:
+        result = await classifier.classify("옵시디언에 이 내용 저장해줘")
+    mock_llm.assert_not_called()
+    assert result.domain == "paper"
