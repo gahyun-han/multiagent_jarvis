@@ -61,4 +61,7 @@ class ErrorRecovery:
             ErrorKind.DATA: f"📋 데이터 처리 오류: `{exc}`",
             ErrorKind.UNKNOWN: f"⚠️ 오류 발생 [{context}]: `{exc}`",
         }
-        await sender.send(chat_id, messages.get(kind, str(exc)))
+        try:
+            await sender.send(chat_id, messages.get(kind, str(exc)))
+        except Exception as send_exc:
+            logger.critical(f"Failed to send error notification to {chat_id}: {send_exc}")

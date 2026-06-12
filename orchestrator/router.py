@@ -33,13 +33,16 @@ class Router:
         self.error_recovery = ErrorRecovery()
 
     async def route(self, message: str, chat_id: int, user_id: int, message_id: int):
-        intent = await self.classifier.classify(message)
-        logger.info(f"Intent: domain={intent.domain} urgency={intent.urgency} conf={intent.confidence:.2f}")
+        try:
+            intent = await self.classifier.classify(message)
+            logger.info(f"Intent: domain={intent.domain} urgency={intent.urgency} conf={intent.confidence:.2f}")
 
-        if intent.urgency == "immediate":
-            await self._dispatch_immediate(intent, chat_id)
-        else:
-            await self._dispatch_backlog(intent, chat_id)
+            if intent.urgency == "immediate":
+                await self._dispatch_immediate(intent, chat_id)
+            else:
+                await self._dispatch_backlog(intent, chat_id)
+        except Exception as e:
+            await self.error_recovery.handle(e, chat_id=chat_id, context="route")
 
     async def _dispatch_immediate(self, intent: Intent, chat_id: int):
         if not self.usage.has_budget():
@@ -58,9 +61,12 @@ class Router:
             await self.error_recovery.handle(e, chat_id=chat_id, context=f"immediate:{intent.domain}")
 
     async def _dispatch_backlog(self, intent: Intent, chat_id: int):
-        from agents.inbox_trage.trage_agent import TriageAgent
-        triage = TriageAgent(sender=self.sender)
-        await triage.handle(intent, chat_id=chat_id)
+        try:
+            from agents.inbox_trage.trage_agent import TriageAgent
+            triage = TriageAgent(sender=self.sender)
+            await triage.handle(intent, chat_id=chat_id)
+        except Exception as e:
+            await self.error_recovery.handle(e, chat_id=chat_id, context="backlog")
 
     async def _ask_urgency(self, intent: Intent, chat_id: int):
         """백로그 여부가 불확실할 때 인라인 버튼으로 사용자에게 직접 물어봄."""
