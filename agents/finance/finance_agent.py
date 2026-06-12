@@ -9,6 +9,8 @@ from agents.finance.ledger_parser import LedgerParser
 from agents.finance.savings_tracker import SavingsTracker
 from agents.finance.asset_manager import AssetManager
 from agents.finance.monthly_summary import get_monthly_summary, get_monthly_graph, get_category_detail
+from agents.finance.report_generator import generate_monthly_report
+from agents.finance.sms_parser import parse_and_save
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,17 @@ class FinanceAgent:
 
     async def handle(self, intent) -> str:
         message = intent.raw_message
+
+        # 월별 리포트 / 자산 현황
+        if any(kw in message for kw in ["월별 리포트", "자산 현황", "월간 리포트", "자산리포트", "월리포트"]):
+            import re
+            m = re.search(r'(\d{4}[-/]\d{2})', message)
+            target_month = m.group(1).replace("/", "-") if m else None
+            return generate_monthly_report(target_month)
+
+        # 카드 문자 파싱
+        if "카드 문자" in message or "카드문자" in message:
+            return await self._handle_sms(message)
 
         # 월별 그래프 (복수 개월 비교)
         if any(kw in message for kw in ["월별 그래프", "월그래프", "월별그래프", "월별 비교", "지출 비교"]):
@@ -167,6 +180,27 @@ class FinanceAgent:
         ledger = self._load_ledger()
         ledger.append(entry)
         LEDGER_PATH.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    async def _handle_sms(self, message: str) -> str:
+        """카드 문자 내용을 파싱해서 transactions.json에 저장."""
+        # "카드 문자" 또는 "카드문자" 키워드 이후 문자 내용 추출
+        import re
+        sms_text = re.sub(r'^.*?(?:카드\s*문자)\s*', '', message, count=1, flags=re.IGNORECASE).strip()
+        if not sms_text:
+            return "⚠️ 카드 문자 내용을 찾지 못했습니다. 예: `카드 문자 신한카드 12,000원 승인 스타벅스`"
+        parsed, success = parse_and_save(sms_text)
+        if success:
+            source_label = "월별합산" if parsed["source"] == "monthly_total" else "건별 승인"
+            return (
+                f"💳 카드 문자 기록 완료 ({source_label})\n"
+                f"카드: {parsed['card']} | 금액: {parsed['amount']:,}원\n"
+                f"가맹점: {parsed['merchant']}"
+            )
+        return (
+            f"⚠️ 카드 문자 파싱 실패 — 원본 텍스트로 저장했습니다.\n"
+            f"내용: `{sms_text[:80]}`\n"
+            f"금액/카드사를 직접 확인해주세요."
+        )
 
     def _load_ledger(self) -> list:
         if not LEDGER_PATH.exists():
