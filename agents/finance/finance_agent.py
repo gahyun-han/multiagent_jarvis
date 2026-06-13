@@ -1,6 +1,7 @@
 """
 Finance agent — comprehensive asset management: ledger, savings, loans.
 """
+import asyncio
 import json
 import logging
 import os
@@ -113,7 +114,9 @@ class FinanceAgent:
             any(v in message for v in _UPDATE_VERBS)
             and any(n in message for n in _ASSET_NOUNS)
         ):
-            return await self._handle_asset_update(message)
+            chat_id = getattr(intent, "chat_id", 0)
+            asyncio.create_task(self._bg_asset_update(message, chat_id))
+            return "💰 자산 업데이트 중입니다. 완료 시 결과를 보내드릴게요."
 
         # 단건/다건 지출·수입 기록
         entries = await self.parser.parse_many(message)
@@ -139,16 +142,36 @@ class FinanceAgent:
             return "\n".join(lines)
 
         context = self._build_context()
+        chat_id = getattr(intent, "chat_id", 0)
+        asyncio.create_task(self._bg_finance_ask(context, message, chat_id))
+        return "💰 재무 분석 중입니다. 완료 시 결과를 보내드릴게요."
+
+    async def _bg_finance_ask(self, context: str, message: str, chat_id: int):
+        sender = TelegramSender()
         try:
-            return await claude_ask(
+            result = await claude_ask(
                 f"재무 현황:\n{context}\n\n질문: {message}",
                 system=_SYSTEM_PROMPT,
                 max_tokens=512,
                 no_tools=True,
             )
+            if chat_id:
+                await sender.send_chunks(chat_id, result)
         except Exception as e:
-            logger.error(f"FinanceAgent error: {e}")
-            return f"💰 재무 처리 중 오류: {e}"
+            logger.error(f"FinanceAgent bg_finance_ask error: {e}")
+            if chat_id:
+                await sender.send(chat_id, f"💰 재무 처리 중 오류: {e}")
+
+    async def _bg_asset_update(self, message: str, chat_id: int):
+        sender = TelegramSender()
+        try:
+            result = await self._handle_asset_update(message)
+            if chat_id and result:
+                await sender.send_chunks(chat_id, result)
+        except Exception as e:
+            logger.error(f"FinanceAgent bg_asset_update error: {e}")
+            if chat_id:
+                await sender.send(chat_id, f"💰 자산 업데이트 오류: {e}")
 
     async def _handle_asset_update(self, message: str) -> str:
         try:
