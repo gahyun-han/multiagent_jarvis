@@ -100,6 +100,7 @@ def _build_monthly_data(months: int = 6) -> list[dict]:
             "card_spend": card_spend,
             "total_expense": total_expense,
             "remainder": remainder,
+            "net_assets": snap.get("net_assets", 0),
             "card_breakdown": _monthly_card_breakdown(m, txs),
         })
     return rows
@@ -108,7 +109,7 @@ def _build_monthly_data(months: int = 6) -> list[dict]:
 # ── 차트 생성 ─────────────────────────────────────────────────────────────────
 
 def generate_chart(months: int = 4) -> bytes:
-    """최근 N개월 수입/지출 바 차트 PNG bytes 반환."""
+    """최근 N개월 수입/지출 바 차트 + 순자산 추이 PNG bytes 반환."""
     _setup_korean_font()
     data = _build_monthly_data(months)
     if not data:
@@ -118,20 +119,27 @@ def generate_chart(months: int = 4) -> bytes:
     incomes = [d["total_income"] / 10000 for d in data]
     expenses = [d["total_expense"] / 10000 for d in data]
     remainders = [d["remainder"] / 10000 for d in data]
+    net_assets_eok = [d["net_assets"] / 100_000_000 for d in data]  # 억원
 
-    x = range(len(labels))
+    x = list(range(len(labels)))
     width = 0.35
 
     fig, ax1 = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor("#1e1e2e")
     ax1.set_facecolor("#1e1e2e")
 
+    # 수입/지출 bar (ax1, 만원)
     bars_income = ax1.bar([i - width / 2 for i in x], incomes, width, label="수입", color="#4ade80", alpha=0.85)
     bars_expense = ax1.bar([i + width / 2 for i in x], expenses, width, label="지출", color="#f87171", alpha=0.85)
 
-    ax2 = ax1.twinx()
-    line = ax2.plot(list(x), remainders, "o-", color="#60a5fa", linewidth=2, markersize=6, label="잔여(만원)")
+    # 잔여 line (ax1과 같은 스케일 — 만원)
+    line_rem = ax1.plot(x, remainders, "o-", color="#60a5fa", linewidth=2, markersize=6, label="잔여(만원)")
 
+    # 순자산 line (ax2 보조축, 억원)
+    ax2 = ax1.twinx()
+    line_na = ax2.plot(x, net_assets_eok, "s--", color="#a78bfa", linewidth=2, markersize=6, label="순자산(억원)")
+
+    # bar value labels
     for bar in bars_income:
         h = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width() / 2, h + 2, f"{h:,.0f}", ha="center", va="bottom", fontsize=7, color="#e2e8f0")
@@ -139,29 +147,35 @@ def generate_chart(months: int = 4) -> bytes:
         h = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width() / 2, h + 2, f"{h:,.0f}", ha="center", va="bottom", fontsize=7, color="#e2e8f0")
 
+    # 잔여 annotations
     for xi, r in zip(x, remainders):
         color = "#4ade80" if r >= 0 else "#f87171"
-        ax2.annotate(f"{r:+,.0f}", (xi, r), textcoords="offset points", xytext=(0, 8),
+        ax1.annotate(f"{r:+,.0f}", (xi, r), textcoords="offset points", xytext=(0, 9),
                      ha="center", fontsize=7, color=color)
 
-    ax1.set_xticks(list(x))
+    # 순자산 annotations
+    for xi, na in zip(x, net_assets_eok):
+        ax2.annotate(f"{na:.1f}억", (xi, na), textcoords="offset points", xytext=(0, 9),
+                     ha="center", fontsize=7, color="#a78bfa")
+
+    ax1.set_xticks(x)
     ax1.set_xticklabels(labels, color="#e2e8f0")
     ax1.set_ylabel("만원", color="#e2e8f0")
-    ax2.set_ylabel("잔여 (만원)", color="#60a5fa")
+    ax2.set_ylabel("순자산 (억원)", color="#a78bfa")
     ax1.tick_params(colors="#e2e8f0")
-    ax2.tick_params(colors="#60a5fa")
+    ax2.tick_params(colors="#a78bfa")
     for spine in ax1.spines.values():
         spine.set_edgecolor("#4a4a6a")
     for spine in ax2.spines.values():
         spine.set_edgecolor("#4a4a6a")
 
-    handles = [bars_income, bars_expense, line[0]]
-    labels_legend = ["수입", "지출", "잔여"]
+    handles = [bars_income, bars_expense, line_rem[0], line_na[0]]
+    labels_legend = ["수입", "지출", "잔여", "순자산"]
     ax1.legend(handles, labels_legend, loc="upper left", facecolor="#2e2e4e", labelcolor="#e2e8f0", fontsize=8)
 
-    ax1.set_title("월별 수입/지출 추이", color="#e2e8f0", fontsize=13, pad=12)
+    ax1.set_title("월별 수입/지출 추이 + 순자산", color="#e2e8f0", fontsize=13, pad=12)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:,.0f}"))
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+,.0f}"))
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1f}"))
     plt.tight_layout()
 
     buf = io.BytesIO()
