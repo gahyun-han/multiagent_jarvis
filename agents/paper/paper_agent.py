@@ -235,15 +235,25 @@ class PaperAgent:
             return "📄 새로운 논문이 없습니다. (이미 전송한 논문만 있음)"
 
         context = self._build_context(papers)
+        chat_id = getattr(intent, "chat_id", 0)
+        prompt = f"내 라이브러리 최근 논문 ({len(papers)}편, 신규):\n{context}\n\n요청: {intent.raw_message}"
+        asyncio.create_task(self._bg_summarize_papers(papers, sent_keys, prompt, chat_id))
+        return f"📄 논문 {len(papers)}편 분석을 백그라운드에서 시작합니다. 완료 시 결과를 보내드릴게요."
+
+    async def _bg_summarize_papers(self, papers: list, sent_keys: set, prompt: str, chat_id: int):
+        """논문 요약을 백그라운드에서 실행하고 완료 시 Telegram 알림."""
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
         try:
-            prompt = f"내 라이브러리 최근 논문 ({len(papers)}편, 신규):\n{context}\n\n요청: {intent.raw_message}"
             result = await claude_ask(prompt, system=_SYSTEM, max_tokens=1024, no_tools=True)
             sent_keys.update(p["key"] for p in papers if p.get("key"))
             _save_sent_keys(sent_keys)
-            return result
+            if chat_id:
+                await sender.send_chunks(chat_id, result)
         except Exception as e:
-            logger.error(f"PaperAgent error: {e}")
-            return f"📄 논문 처리 중 오류: {e}"
+            logger.error(f"_bg_summarize_papers error: {e}", exc_info=True)
+            if chat_id:
+                await sender.send(chat_id, f"📄 논문 분석 중 오류: {e}")
 
     async def _bg_sync_collections(self, chat_id: int):
         """컬렉션 동기화를 백그라운드 스레드에서 실행하고 완료 시 Telegram 알림."""

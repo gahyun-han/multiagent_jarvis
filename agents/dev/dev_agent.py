@@ -3,6 +3,7 @@ Dev agent — code review, debugging help, architecture advice.
 Also dispatches autotest requests to AutoTestAgent.
 """
 import re
+import asyncio
 import logging
 from pathlib import Path
 from systems.claude_runner import async_ask as claude_ask
@@ -38,25 +39,57 @@ class DevAgent:
     async def handle(self, intent) -> str:
         message = intent.raw_message
 
+        chat_id = getattr(intent, "chat_id", 0)
         msg_lower = message.lower()
         is_concept = any(s in msg_lower for s in _CONCEPT_SIGNALS)
         if any(t in msg_lower for t in _AUTOTEST_TRIGGERS) and not is_concept:
-            return await self._run_autotest(message)
+            if not re.search(r"(agents/[\w/]+\.py|systems/[\w/]+\.py)", message):
+                return (
+                    "⚠️ 테스트할 파일 경로를 포함해 주세요.\n"
+                    "예: `autotest agents/finance/ledger_parser.py`"
+                )
+            asyncio.create_task(self._bg_run(self._run_autotest, message, chat_id))
+            return "🧪 자동 테스트 생성을 시작합니다. 완료 시 결과를 보내드릴게요."
 
         # 프로젝트 이름 + 실행 키워드 → RunAgent
         if any(p.lower() in message.lower() for p in _KNOWN_PROJECTS) and \
            any(t in message for t in _RUN_TRIGGERS):
-            return await self._run_project(intent)
+            asyncio.create_task(self._bg_run(self._run_project, intent, chat_id))
+            return "🚀 프로젝트 실행을 시작합니다. 완료 시 결과를 보내드릴게요."
 
         # .py 경로 + 수정 키워드 → FixAgent
         if re.search(r"[\w/\-~]+\.py", message) and any(t in message for t in _FIX_TRIGGERS):
-            return await self._run_fix(intent)
+            asyncio.create_task(self._bg_run(self._run_fix, intent, chat_id))
+            return "🔧 코드 수정을 시작합니다. 완료 시 결과를 보내드릴게요."
 
+        chat_id = getattr(intent, "chat_id", 0)
+        asyncio.create_task(self._bg_dev_ask(message, chat_id))
+        return "💻 분석 중입니다. 완료 시 답변을 보내드릴게요."
+
+    async def _bg_dev_ask(self, message: str, chat_id: int):
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
         try:
-            return await claude_ask(message, system=_SYSTEM, max_tokens=2048, no_tools=True)
+            result = await claude_ask(message, system=_SYSTEM, max_tokens=2048, no_tools=True)
+            if chat_id:
+                await sender.send_chunks(chat_id, result)
         except Exception as e:
-            logger.error(f"DevAgent error: {e}")
-            return f"💻 개발 도움 처리 중 오류: {e}"
+            logger.error(f"DevAgent bg error: {e}")
+            if chat_id:
+                await sender.send(chat_id, f"💻 개발 도움 처리 중 오류: {e}")
+
+    async def _bg_run(self, fn, arg, chat_id: int):
+        """범용 백그라운드 래퍼 — fn(arg)를 실행하고 완료 시 Telegram 전송."""
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
+        try:
+            result = await fn(arg)
+            if chat_id and result:
+                await sender.send_chunks(chat_id, result)
+        except Exception as e:
+            logger.error(f"DevAgent bg_run error: {e}")
+            if chat_id:
+                await sender.send(chat_id, f"⚠️ 처리 중 오류: {e}")
 
     async def _run_autotest(self, message: str) -> str:
         from agents.dev.autotest_agent import AutoTestAgent
