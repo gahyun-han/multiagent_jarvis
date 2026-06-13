@@ -251,7 +251,7 @@ class FinanceAgent:
         try:
             if want_chart:
                 chart_bytes = generate_chart(months)
-                await sender.send_photo(chat_id, chart_bytes, caption=f"📊 최근 {months}개월 수입/지출 추이")
+                await sender.send_photo(chat_id, chart_bytes, caption="📊 월별 수입/지출/순자산 변화")
             if want_excel:
                 table_bytes = generate_table_image(months)
                 await sender.send_photo(chat_id, table_bytes, caption=f"📋 최근 {months}개월 가계부 요약")
