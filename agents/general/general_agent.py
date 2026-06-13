@@ -3,6 +3,7 @@ General agent — handles unclassified immediate requests.
 If the message references a known external project, injects its file tree
 and relevant file contents so Claude has real context.
 """
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -21,17 +22,26 @@ You are Jarvis, a personal AI assistant. Answer the user's question or request d
 class GeneralAgent:
     async def handle(self, intent) -> str:
         message = intent.raw_message
+        chat_id = getattr(intent, "chat_id", 0)
         logger.info(f"GeneralAgent handling: {message[:60]}")
 
         context = self._build_context(message)
         prompt = f"{context}\n\n{message}".strip() if context else message
 
+        asyncio.create_task(self._bg_ask(prompt, chat_id))
+        return "🤔 분석 중입니다. 완료 시 답변을 보내드릴게요."
+
+    async def _bg_ask(self, prompt: str, chat_id: int):
+        from systems.telegram_sender import TelegramSender
+        sender = TelegramSender()
         try:
-            # no_tools=True: 파일 읽기 등 도구 사용 금지 — 컨텍스트는 이미 _build_context로 주입됨
-            return await claude_ask(prompt, system=_SYSTEM, max_tokens=1024, no_tools=True)
+            result = await claude_ask(prompt, system=_SYSTEM, max_tokens=1024, no_tools=True)
+            if chat_id:
+                await sender.send_chunks(chat_id, result)
         except Exception as e:
-            logger.error(f"GeneralAgent failed: {e}")
-            return f"⚠️ 처리 중 오류가 발생했습니다: {e}"
+            logger.error(f"GeneralAgent bg_ask failed: {e}")
+            if chat_id:
+                await sender.send(chat_id, f"⚠️ 처리 중 오류가 발생했습니다: {e}")
 
     def _build_context(self, message: str) -> str:
         """메시지에 외부 프로젝트 언급이 있으면 파일 구조와 main.py를 컨텍스트로 추가."""
