@@ -206,10 +206,15 @@ def _find_snapshot(snapshots: list[dict], month: str) -> dict | None:
 
 
 def _append_snapshot(existing: list[dict], new: dict) -> None:
-    # 같은 month가 이미 있으면 업데이트, 없으면 추가
+    today_month = date.today().strftime("%Y-%m")
     for i, s in enumerate(existing):
         if s["month"] == new["month"]:
-            existing[i] = new
+            if s["month"] == today_month:
+                # 당월은 전체 업데이트 (현재 자산값 반영)
+                existing[i] = new
+            else:
+                # 과거 월은 card_spend만 갱신 — 자산 스냅샷 보존
+                existing[i]["card_spend"] = new["card_spend"]
             break
     else:
         existing.append(new)
