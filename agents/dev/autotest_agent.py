@@ -122,7 +122,7 @@ class AutoTestAgent:
     async def _plan(self, source: str, filename: str) -> list[dict]:
         prompt = f"File: {filename}\n\n```python\n{source}\n```"
         try:
-            raw = await claude_ask(prompt, system=_PLAN_SYSTEM)
+            raw = await claude_ask(prompt, system=_PLAN_SYSTEM, no_tools=True)
             raw = self._strip_fence(raw)
             import json
             return json.loads(raw)
