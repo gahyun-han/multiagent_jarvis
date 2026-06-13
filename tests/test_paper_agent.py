@@ -32,13 +32,16 @@ class TestPaperAgentInit:
 
 class TestPaperAgentHandle:
     def test_handle_happy_path(self):
+        """논문이 있으면 백그라운드 시작 메시지를 즉시 반환한다."""
         intent = _make_intent("최근 트랜스포머 논문 알려줘")
+        intent.chat_id = 0
         with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(3)
             with patch("agents.paper.paper_agent.claude_ask", return_value="Claude response"):
                 agent = PaperAgent()
                 result = asyncio.run(agent.handle(intent))
-        assert result == "Claude response"
+        assert "백그라운드" in result
+        assert "3편" in result
 
     def test_handle_empty_library(self):
         intent = _make_intent("요약해줘")
@@ -52,14 +55,15 @@ class TestPaperAgentHandle:
         mock_ask.assert_not_called()
 
     def test_handle_claude_raises_exception(self):
+        """논문이 있으면 claude_ask 오류 여부와 무관하게 백그라운드 시작 메시지를 반환한다."""
         intent = _make_intent("요약해줘")
+        intent.chat_id = 0
         with patch("agents.paper.paper_agent.ZoteroClient") as MockClient:
             MockClient.return_value.get_recent_papers.return_value = _make_papers(1)
             with patch("agents.paper.paper_agent.claude_ask", side_effect=RuntimeError("timeout")):
                 agent = PaperAgent()
                 result = asyncio.run(agent.handle(intent))
-        assert result.startswith("📄 논문 처리 중 오류:")
-        assert "timeout" in result
+        assert "백그라운드" in result
 
     def test_handle_passes_raw_message_in_prompt(self):
         intent = _make_intent("특정 키워드 검색")
