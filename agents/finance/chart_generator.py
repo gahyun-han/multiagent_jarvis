@@ -122,24 +122,22 @@ def generate_chart(months: int = 4) -> bytes:
     net_assets_eok = [d["net_assets"] / 100_000_000 for d in data]  # 억원
 
     x = list(range(len(labels)))
-    width = 0.35
+    width = 0.25
 
     fig, ax1 = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor("#1e1e2e")
     ax1.set_facecolor("#1e1e2e")
 
-    # 수입/지출 bar (ax1, 만원)
-    bars_income = ax1.bar([i - width / 2 for i in x], incomes, width, label="수입", color="#4ade80", alpha=0.85)
-    bars_expense = ax1.bar([i + width / 2 for i in x], expenses, width, label="지출", color="#f87171", alpha=0.85)
-
-    # 잔여 line (ax1과 같은 스케일 — 만원)
-    line_rem = ax1.plot(x, remainders, "o-", color="#60a5fa", linewidth=2, markersize=6, label="잔여(만원)")
+    # 수입/지출/잔여 bar 3개 (ax1, 만원) — 중앙 정렬
+    bars_income  = ax1.bar([i - width for i in x], incomes,    width, label="수입",     color="#4ade80", alpha=0.85)
+    bars_expense = ax1.bar(x,                       expenses,   width, label="지출",     color="#f87171", alpha=0.85)
+    bars_rem     = ax1.bar([i + width for i in x], remainders, width, label="잔여(만원)", color="#fbbf24", alpha=0.85)
 
     # 순자산 line (ax2 보조축, 억원)
     ax2 = ax1.twinx()
     line_na = ax2.plot(x, net_assets_eok, "s--", color="#a78bfa", linewidth=2, markersize=6, label="순자산(억원)")
 
-    # bar value labels
+    # bar value labels — 수입/지출
     for bar in bars_income:
         h = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width() / 2, h + 2, f"{h:,.0f}", ha="center", va="bottom", fontsize=7, color="#e2e8f0")
@@ -147,11 +145,12 @@ def generate_chart(months: int = 4) -> bytes:
         h = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width() / 2, h + 2, f"{h:,.0f}", ha="center", va="bottom", fontsize=7, color="#e2e8f0")
 
-    # 잔여 annotations
-    for xi, r in zip(x, remainders):
-        color = "#4ade80" if r >= 0 else "#f87171"
-        ax1.annotate(f"{r:+,.0f}", (xi, r), textcoords="offset points", xytext=(0, 9),
-                     ha="center", fontsize=7, color=color)
+    # 잔여 bar value labels (양수: 위, 음수: 아래)
+    for bar in bars_rem:
+        h = bar.get_height()
+        color = "#4ade80" if h >= 0 else "#f87171"
+        y = h + 2 if h >= 0 else h - 14
+        ax1.text(bar.get_x() + bar.get_width() / 2, y, f"{h:+,.0f}", ha="center", va="bottom", fontsize=7, color=color)
 
     # 순자산 annotations
     for xi, na in zip(x, net_assets_eok):
@@ -169,11 +168,11 @@ def generate_chart(months: int = 4) -> bytes:
     for spine in ax2.spines.values():
         spine.set_edgecolor("#4a4a6a")
 
-    handles = [bars_income, bars_expense, line_rem[0], line_na[0]]
+    handles = [bars_income, bars_expense, bars_rem, line_na[0]]
     labels_legend = ["수입", "지출", "잔여", "순자산"]
     ax1.legend(handles, labels_legend, loc="upper left", facecolor="#2e2e4e", labelcolor="#e2e8f0", fontsize=8)
 
-    ax1.set_title("월별 수입/지출 추이 + 순자산", color="#e2e8f0", fontsize=13, pad=12)
+    ax1.set_title("월별 수입/지출/순자산 변화", color="#e2e8f0", fontsize=13, pad=12)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1f}"))
     plt.tight_layout()
