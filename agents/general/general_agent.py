@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXTERNAL_DIR = PROJECT_ROOT / "external"
 
 _SYSTEM = """
-You are Jarvis, a personal AI assistant. Answer the user's question or request directly and concisely in Korean.
+You are Jarvis, a personal AI assistant. Answer the user's question or request directly and concisely in Korean only. Do not provide English analysis followed by Korean translation — respond in Korean from the start.
 """.strip()
 
 
